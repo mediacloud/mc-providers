@@ -4,6 +4,7 @@ import itertools
 import random
 import copy
 import pytest
+import csv
 import mediacloud.api
 import os
 from typing import List
@@ -386,3 +387,19 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(story['title']) > 0
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
+
+    def test_giant_collection_query(self):
+        # query against the giant us state & local collection as a real-world huge test
+        with open(os.path.join(os.path.dirname(__file__), 'data', 'Collection-38379429-sources-20240611133536.csv')) as f:
+            reader = csv.DictReader(f)
+            domains = [row['name'] for row in reader]
+        # do a one-day query just to see if it works
+        results = self._provider.count("*",
+                                       dt.datetime(2023, 3, 1), dt.datetime(2023, 3, 2),
+                                       domains=domains)
+        assert results > 0
+        # do a 1 month query just to see if it works
+        results = self._provider.count("*",
+                                       dt.datetime(2023, 3, 1), dt.datetime(2023, 4, 1),
+                                       domains=domains)
+        assert results > 0
