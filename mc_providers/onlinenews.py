@@ -271,6 +271,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         cls._prune_kwargs(kwcopy)
         if kwcopy:
             exstring = ", ".join(kwcopy) # join key names
+            # If here with "_seconds", client's cache_function needs updating!
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
@@ -952,13 +953,79 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # or len(results["hits"]) == 0
         return results["total"] == 0
 
-    def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
+    def _get_last_indexed(self, name: str) -> str:
+        """
+        return max indexed_date (for an ILM sub-index)
+        only takes a few milliseconds
+        """
+        agg = "max_indexed"
+        maxquery = {
+            "size": 0,          # just the aggs ma'am
+            "aggs": {
+                agg: { "max": { "field": "indexed_date" } }
+            }
+        }
+        res = self._es.search(index=name, body=maxquery)
+        t = res["aggregations"][agg]["value_as_string"]
+        assert isinstance(t, str)
+        return t[:10]           # YYYY-MM-DD
+
+    @CachingManager.cache(seconds=15*60)
+    def _get_subindices(self, index: str) -> list[list[str]]:
+        """
+        index is a wildcard, passed as argument (instead of
+        picked up from self._index) so included in hash key
+        for paranoia in case index switched for testing!!!
+
+        return ordered list of [last_indexed_date_str, subindex_name]
+        sorted in descending order
+        """
+        # "indices.get" returns lots of data, none of it useful
+        # (creation date could be when it was reindexed!)
+        res = self._es.indices.get_alias(index=index)
+
+        # plain list of lists, so JSONable.  date first for sorting below
+        subindices = [
+            [self._get_last_indexed(name), name]
+            for name in res.keys()
+        ]
+
+        # sort in descending order by date of last indexed story
+        # should be same as descending sort on name!!!
+        subindices.sort(reverse=True)
+        return subindices
+
+    USE_SUBINDEX_LIST = True
+
+    def _index_from_dates(self, start_date: dt.datetime, end_date: dt.datetime) -> list[str]:
         """
         return list of indices to search for a given date range.
-        if indexing goes back to being split by publication_date (by year or quarter?)
-        this could limit the number of shards that need to be queried
+
+        This version doesn't depend on having date-segregated sub-indices:
+        any sub-index finished (with a max indexed_date) before the
+        published_date range can't contain stories of interest.
+
+        Anything with a published date BEFORE the first index
+        will have to search ALL indices!
+
+        Searches are expected to NEVER include the current UTC date.
         """
-        return [self._index]
+        if self.USE_SUBINDEX_LIST:
+            # expand by a month for: articles accepted in advance,
+            # date truncation in subindices list, subindex overlap
+            start_pub_datetime = start_date - dt.timedelta(days=31)
+            start_pub_date_str = start_pub_datetime.date().isoformat()
+
+            ret: list[str] = []
+            for last_indexed, name in self._get_subindices(self._index):
+                # quit as soon as next oldest index can't contain anything
+                if start_pub_date_str > last_indexed:
+                    break
+                ret.append(name)
+            logger.info("subindex_list %s %r", start_pub_date_str, ret) # LOWER TO DEBUG!
+            return ret
+        else:
+            return [self._index]
 
     def _search(self, search: Search) -> Response:
         """
