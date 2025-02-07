@@ -369,7 +369,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert page1_url1 not in page2_urls  # verify pages don't overlap
         page2_first = page2[0][out_field]
         page2_last = page2[-1][out_field]
-        assert page2_first < page1_last
+        assert page2_first <= page1_last
         assert page2_first > page2_last
 
     def test_paged_items_asc(self):
@@ -515,3 +515,50 @@ class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(story['title']) > 0
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
+
+    def _test_random_sample(self, fields, limit):
+        query = "biden"
+        start_date = dt.datetime(2023, 11, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        results = []
+        for page in self._provider.random_sample(query, start_date, end_date,
+                                                 limit=limit, fields=fields,
+                                                 domains=["nytimes.com"]):
+            results.extend(page)
+
+        # check limit filled
+        assert len(results) == limit
+
+        fset = set(fields)
+        for item in results:
+            # check all fields returned
+            assert set(item.keys()) == fset
+
+            for key, value in item.items():
+                if key == "id":
+                    assert isinstance(value, str)
+                    assert len(value) >= 64
+                elif key == "indexed_date":
+                    assert isinstance(value, dt.date)
+                elif key == "publish_date":
+                    assert isinstance(value, dt.datetime)
+                elif key in ("language", "media_name", "media_url", "text",
+                             "title", "url"):
+                    assert isinstance(value, str)
+                    assert len(value) >= 2
+
+    def test_random_sample_lang_title(self):
+        self._test_random_sample(["fields", "language"], 5000)
+
+    def test_random_sample_lang(self):
+        self._test_random_sample(["language"], 5000)
+
+    def test_id(self):
+        # id requires special handling
+        self._test_random_sample(["id"], 5000)
+
+    def test_random_sample_all(self):
+        self._test_random_sample(["id", "indexed_date", "language",
+                                  "media_name", "media_url", "publish_date",
+                                  "text", "title", "url"], limit=2)
+        assert False

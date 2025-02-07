@@ -717,15 +717,36 @@ def _format_match(hit: Hit, expanded: bool = False) -> dict:
         "publication_date": getattr(hit, "publication_date", "")[:10] or None,
         "indexed_date": getattr(hit, "indexed_date", None),
         "language": getattr(hit, "language", None),
-        "full_langauge": getattr(hit, "full_language", None),
+        "full_langauge": getattr(hit, "full_language", None), # never returned!
         "url": getattr(hit, "url", None),
-        "original_url": getattr(hit, "original_url", None),
+        "original_url": getattr(hit, "original_url", None), # never returned!
         "canonical_domain": getattr(hit, "canonical_domain", None),
         "id": hit.meta.id        # PB: was re-hash of url!
     }
     if expanded:
         res["text_content"] = getattr(hit, "text_content", None)
     return res
+
+# Added for format_match_fields, which was added for random_sample
+# NOTE! full_language and original_url are NOT included,
+# since they're never returned in a "row"
+_FIELDS: dict[str, tuple[str | None, Callable[[Hit], Any]] | None] = {
+    # map external (row) field name to tuple of:
+    # es_name (or None if metadata, must have extractor)
+    # extractor: function extracts and/or formats/parses data
+    #   if None, uses getattr(hit, es_name)
+    "id": (None, lambda hit : hit.meta.id),
+    "indexed_date": ("indexed_date",
+                     lambda hit: ciso8601.parse_datetime(hit.indexed_date+"Z")),
+    "language": ("language", None),
+    "media_name": ("canonical_domain", None),
+    "media_url": ("canonical_domain", None),
+    "publish_date": ("publication_date",
+                     lambda hit: dt.date.fromisoformat(hit.publication_date[:10])),
+    "text": ("text_content", None),
+    "title": ("article_title", None),
+    "url": ("url", None),
+}
 
 def _format_day_counts(bucket: list) -> Counts:
     """
@@ -1289,12 +1310,46 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             if not next_page_token:
                 break
 
-    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
-                             **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+    @staticmethod
+    def _hit_to_row(hit: Hit, fields: list[str]) -> dict[str, Any]:
         """
-        helper for generic Provider._sampled_title_words;
-        returns a single page with entire sample_size of dicts
+        format a Hit returned by ES into an external "row".
+        fields is a list of external/row field names to be returned
+        (from _format_match (above) AND _matches to rows)
         """
+        res = {}
+        for field in fields:        # necessary to return "id"
+            es_name, extractor = _FIELDS[field]
+            if es_name is None or es_name in hit:
+                if extractor is None and es_name is not None:
+                    if es_name in hit:
+                        res[field] = getattr(hit, es_name)
+                    else:
+                        logged.debug("_hit_to_row missing %s", es_name)
+                else:
+                    res[field] = extractor(hit)
+        return res
+
+    def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                      limit: int, fields: list[str], **kwargs: Any) -> Iterable[list[dict[str,Any]]]:
+        """
+        returns iterable to allow pagination
+        """
+        if limit < 1:
+            raise ValueError("ES.random_sample requires non-zero limit")
+
+        if not fields:
+            # _COULD_ default to everything, but make user think
+            # about what they need!
+            raise ValueError("ES.random_sample requires fields list")
+
+        # convert requested field names to ES field names
+        es_fields = []
+        for field in fields:
+            esf = _FIELDS[field][0]
+            if esf:
+                es_fields.append(esf)
+
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
@@ -1309,12 +1364,20 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                              ]
                          )
                      )\
-                     .source(["article_title", "language"])\
-                     .extra(size=sample_size) # everything in one query
+                     .source(es_fields)\
+                     .extra(size=limit) # everything in one query (for now)
 
         hits = self._search_hits(search)
-        ret = [{"title": hit.article_title, "language": hit.language} for hit in hits]
-        return [ret]            # single page
+        return [[self._hit_to_row(hit, fields) for hit in hits]]
+
+    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
+                       **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+        """
+        worker for Provider._sampled_title_words
+        """
+
+        return self.random_sample(query, start_date, end_date, sample_size,
+                            fields=["title", "language"], **kwargs)
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs: Any) -> list[Term]:
