@@ -440,6 +440,53 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         # unfixed code died with "TypeError: '<' not supported between instances of 'SanitizedQueryString' and 'Range'"
         page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, page_size=1)
 
+    def _collect_random_results(self, query, fields, limit, start, end):
+        start_date = start or dt.datetime(2023, 1, 1)
+        end_date = end or dt.datetime(2023, 12, 31)
+        results = []
+        # currently returns only one page, but be prepared!
+        for page in self._provider.random_sample(query, start_date, end_date,
+                                                 limit=limit, fields=fields):
+            results.extend(page)
+        return results
+
+    def _test_random_sample(self, fields, limit, start=None, end=None):
+        # check limit filled
+        results = self._collect_random_results("biden", fields, limit, start, end)
+        assert len(results) == limit
+
+        fset = set(fields)
+        for item in results:
+            # check all fields returned
+            assert set(item.keys()) == fset
+
+            for key, value in item.items():
+                if key == "id":
+                    assert isinstance(value, str)
+                    assert len(value) >= 64
+                elif key == "indexed_date":
+                    assert isinstance(value, dt.datetime)
+                elif key == "publish_date":
+                    assert isinstance(value, dt.date)
+                elif key in ("language", "media_name", "media_url", "text",
+                             "title", "url"):
+                    assert isinstance(value, str)
+                    assert len(value) >= 2
+
+    def test_random_sample_lang_title(self):
+        self._test_random_sample(["title", "language"], 1000)
+
+    def test_random_sample_lang(self):
+        self._test_random_sample(["language"], 1000)
+
+    def test_random_sample_id(self):
+        # id requires special handling
+        self._test_random_sample(["id"], 10000)
+
+    def test_random_sample_all(self):
+        self._test_random_sample(["id", "indexed_date", "language",
+                                  "media_name", "media_url", "publish_date",
+                                  "text", "title", "url"], limit=2)
 
 @pytest.mark.skipif(IN_GITHUB_CI_WORKFLOW, reason="requires VPN tunnel to Media Cloud News Search API server")
 class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
@@ -516,49 +563,5 @@ class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
 
-    def _test_random_sample(self, fields, limit):
-        query = "biden"
-        start_date = dt.datetime(2023, 11, 1)
-        end_date = dt.datetime(2023, 12, 1)
-        results = []
-        for page in self._provider.random_sample(query, start_date, end_date,
-                                                 limit=limit, fields=fields,
-                                                 domains=["nytimes.com"]):
-            results.extend(page)
-
-        # check limit filled
-        assert len(results) == limit
-
-        fset = set(fields)
-        for item in results:
-            # check all fields returned
-            assert set(item.keys()) == fset
-
-            for key, value in item.items():
-                if key == "id":
-                    assert isinstance(value, str)
-                    assert len(value) >= 64
-                elif key == "indexed_date":
-                    assert isinstance(value, dt.date)
-                elif key == "publish_date":
-                    assert isinstance(value, dt.datetime)
-                elif key in ("language", "media_name", "media_url", "text",
-                             "title", "url"):
-                    assert isinstance(value, str)
-                    assert len(value) >= 2
-
-    def test_random_sample_lang_title(self):
-        self._test_random_sample(["fields", "language"], 5000)
-
-    def test_random_sample_lang(self):
-        self._test_random_sample(["language"], 5000)
-
-    def test_id(self):
-        # id requires special handling
-        self._test_random_sample(["id"], 5000)
-
-    def test_random_sample_all(self):
-        self._test_random_sample(["id", "indexed_date", "language",
-                                  "media_name", "media_url", "publish_date",
-                                  "text", "title", "url"], limit=2)
-        assert False
+    # THIS IS (almost certainly) NOT THE CLASS YOU'RE LOOKING FOR
+    # (tests for Old Provider)
