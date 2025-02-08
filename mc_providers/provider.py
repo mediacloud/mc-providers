@@ -232,7 +232,7 @@ class ContentProvider(ABC):
         counts: collections.Counter = collections.Counter()
         for page in self.all_items(query, start_date, end_date, limit=sample_size):
             sampled_count += len(page)
-            [counts.update(t['language'] for t in page)]
+            [counts.update(t.get('language', "UNK") for t in page)]
         # clean up results
         results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         return results
@@ -250,6 +250,7 @@ class ContentProvider(ABC):
                              **kwargs: Any) -> list[Term]:
         # support sample_size kwarg
         sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
+        # NOTE! english stopwords contain contractions!!!
         remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
 
         # grab a sample and count terms as we page through it
@@ -257,7 +258,7 @@ class ContentProvider(ABC):
         counts: collections.Counter = collections.Counter()
         for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
-            [counts.update(terms_without_stopwords(t['language'], t['title'], remove_punctuation)) for t in page]
+            [counts.update(terms_without_stopwords(t.get('language', 'UNK'), t['title'], remove_punctuation)) for t in page  if 'title' in t]
         # clean up results
         results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
