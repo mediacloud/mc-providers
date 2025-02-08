@@ -729,23 +729,46 @@ def _format_match(hit: Hit, expanded: bool = False) -> dict:
 
 # Added for format_match_fields, which was added for random_sample
 # NOTE! full_language and original_url are NOT included,
-# since they're never returned in a "row"
-_FIELDS: dict[str, tuple[str | None, Callable[[Hit], Any]] | None] = {
-    # map external (row) field name to tuple of:
-    # es_name (or None if metadata, must have extractor)
-    # extractor: function extracts and/or formats/parses data
-    #   if None, uses getattr(hit, es_name)
-    "id": (None, lambda hit : hit.meta.id),
-    "indexed_date": ("indexed_date",
-                     lambda hit: ciso8601.parse_datetime(hit.indexed_date+"Z")),
-    "language": ("language", None),
-    "media_name": ("canonical_domain", None),
-    "media_url": ("canonical_domain", None),
-    "publish_date": ("publication_date",
-                     lambda hit: dt.date.fromisoformat(hit.publication_date[:10])),
-    "text": ("text_content", None),
-    "title": ("article_title", None),
-    "url": ("url", None),
+# since they're never returned in a "row".
+class _ES_Field:
+    """ordinary field"""
+    METADATA = False
+
+    def __init__(self, field_name: str):
+        self.es_field_name = field_name
+
+    def get(self, hit: Hit) -> Any:
+        return getattr(hit, self.es_field_name)
+
+class _ES_DateTime(_ES_Field):
+    def get(self, hit: Hit) -> Any:
+        return ciso8601.parse_datetime(super().get(hit) + "Z")
+
+class _ES_Date(_ES_Field):
+    def get(self, hit: Hit) -> Any:
+        return dt.date.fromisoformat(super().get(hit)[:10])
+
+class _ES_MetaData(_ES_Field):
+    """
+    metadata field (incl 'id', 'index', 'score')
+    """
+    METADATA = True             # does not need to be requested
+
+    def get(self, hit: Hit) -> Any:
+        return getattr(hit.meta, self.es_field_name)
+
+# map external (row) field name to _ES_Field instance
+# (with "get" method to fetch/parse field from Hit)
+_FIELDS: dict[str, _ES_Field] = {
+    "id": _ES_MetaData("id"),
+    "indexed_date": _ES_DateTime("indexed_date"),
+    "language": _ES_Field("language"),
+    "media_name": _ES_Field("canonical_domain"),
+    "media_url": _ES_Field("canonical_domain"),
+    "publish_date": _ES_Date("publication_date"),
+    "text": _ES_Field("text_content"),
+    "title": _ES_Field("article_title"),
+    "url": _ES_Field("url"),
 }
 
 def _format_day_counts(bucket: list) -> Counts:
@@ -872,6 +895,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         with only millisecond resolution, while the stored string usually
         has microsecond resolution.
         """
+        # original_url, full_language never passed up to user?!
         fields: list[Field] = [
             "article_title", "publication_date", "indexed_date",
             "language", "full_language", "canonical_domain", "url", "original_url"
@@ -1317,38 +1341,44 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         fields is a list of external/row field names to be returned
         (from _format_match (above) AND _matches to rows)
         """
-        res = {}
-        for field in fields:        # necessary to return "id"
-            es_name, extractor = _FIELDS[field]
-            if es_name is None or es_name in hit:
-                if extractor is None and es_name is not None:
-                    if es_name in hit:
-                        res[field] = getattr(hit, es_name)
-                    else:
-                        logged.debug("_hit_to_row missing %s", es_name)
-                else:
-                    res[field] = extractor(hit)
+        # need to iterate over _external_ names rather than just returned
+        # fields to be able to return metadata fields
+        res = {
+            field: _FIELDS[field].get(hit)
+            for field in fields
+        }
         return res
 
+    # max controlled by index-level index.max_result_window, default is 10K.
+    MAX_RANDOM_SAMPLE = 10000   # need pagination for more!
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                       limit: int, fields: list[str], **kwargs: Any) -> Iterable[list[dict[str,Any]]]:
         """
-        returns iterable to allow pagination
-        """
-        if limit < 1:
-            raise ValueError("ES.random_sample requires non-zero limit")
+        returns iterable to allow pagination, but actual pagination may
+        require more work.
 
+        If pagination issues perfected, "fields" and "randomize" and "limit"
+        _COULD_ be kwargs processed by _basic_query?!!!
+
+        _PERHAPS_ just be up-front, and have randomize require
+        passing seed and field arguments for RandomScore?
+
+        To discourage indescriminate use/impact allow
+        MAX_RANDOM_SAMPLE rows for single field query, half that for
+        two fields and so on...  Some fields are (obviously) more
+        expensive than others (language vs full_text!)  Could have
+        _ES_Field take a per-field weight as optional argument!
+        """
         if not fields:
             # _COULD_ default to everything, but make user think
             # about what they need!
             raise ValueError("ES.random_sample requires fields list")
 
+        if limit < 1 or limit > self.MAX_RANDOM_SAMPLE/len(fields):
+            raise ValueError(f"ES.random_sample limit must be between 1 and {self.MAX_RANDOM_SAMPLE}/nfields")
+
         # convert requested field names to ES field names
-        es_fields = []
-        for field in fields:
-            esf = _FIELDS[field][0]
-            if esf:
-                es_fields.append(esf)
+        es_fields = [_FIELDS[f].es_field_name for f in fields if not _FIELDS[f].METADATA]
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
@@ -1374,8 +1404,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                        **kwargs: Any) -> Iterable[list[dict[str,str]]]:
         """
         worker for Provider._sampled_title_words
+        (could be eliminated if _sampled_title_words calls random_sample?)
         """
-
         return self.random_sample(query, start_date, end_date, sample_size,
                             fields=["title", "language"], **kwargs)
 
