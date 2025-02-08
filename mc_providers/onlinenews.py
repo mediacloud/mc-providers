@@ -1410,19 +1410,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         hits = self._search_hits(search)
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
-    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
-                       **kwargs: Any) -> Iterable[list[dict[str,str]]]:
-        """
-        worker for Provider._sampled_title_words
-        (could be eliminated if _sampled_title_words calls random_sample?)
-        """
-        return self.random_sample(query, start_date, end_date, sample_size,
-                            fields=["title", "language"], **kwargs)
-
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs: Any) -> list[Term]:
         """
-        uses generic Provider._sampled_title_words
-        with data from local helper above
+        uses generic Provider._sampled_title_words and Provider._sample_titles!
         """
         return self._sampled_title_words(query, start_date, end_date, limit=limit, **kwargs)
