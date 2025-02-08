@@ -298,12 +298,15 @@ class OnlineNewsAbstractProvider(ContentProvider):
             domain_strings = " OR ".join(domains)
             selector_clauses.append(f"{cls.domain_search_string()}:({domain_strings})")
             
-        # put all filters in single query string (NOTE: additive)
+        # put all filters in single query string
+        # (NOTE: filters are additive, not subtractive!)
         filters = kwargs.get('filters', [])
         if len(filters) > 0:
             for filter in filters:
                 if "AND" in filter:
                     # parenthesize if any chance it has a grabby AND.
+                    # (Phil: did I get this in reverse? and would need to parenthesize
+                    # things containing OR if ANDing subtractive clauses together?)
                     selector_clauses.append(f"({filter})")
                 else:
                     selector_clauses.append(filter)
@@ -661,10 +664,11 @@ from elasticsearch_dsl.utils import AttrDict
 
 from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, ProviderException, TemporaryProviderException
 
-Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
+ES_Fieldname: TypeAlias = str | InstrumentedField # quiet mypy complaints
+ES_Fieldnames: TypeAlias = list[ES_Fieldname]
 
 class FilterTuple(NamedTuple):
-    weight: int
+    weight: int | float
     query: Query | None
 
 _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
@@ -675,10 +679,8 @@ _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 _DEF_SORT_FIELD = "indexed_date"
 _DEF_SORT_ORDER = "desc"
 
-# Secondary sort key to break ties if sort_field is non-empty.
-# Used as sole sort key if "sort_field" argument or
-# _DEF_SORT_FIELD (above) is empty string.
-# _doc is documented as most efficient sort key at:
+# Secondary sort key to break ties
+# (see above about identical indexed_date values)
 # https://www.elastic.co/guide/en/elasticsearch/reference/current/sort-search-results.html
 #
 # But at
@@ -689,28 +691,29 @@ _DEF_SORT_ORDER = "desc"
 #   documents with the same sort values are not ordered consistently."
 #
 # HOWEVER: use of session_id/preference should route all requests
-# from the same session to the same shards for each successive query.
+# from the same session to the same shards for each successive query,
+# so (to quote HHGttG) "mostly harmless"?
 _SECONDARY_SORT_ARGS = {"_doc": "asc"}
-
-def _sanitize(s: str) -> str:
-    """
-    quote slashes to avoid interpretation as /regexp/
-    as done by _sanitize_es_query in mc_providers/mediacloud.py client library
-
-    should only be used by SanitizedQueryString!
-    """
-    return s.replace("/", r"\/")
 
 class SanitizedQueryString(QueryString):
     """
     query string (expression) with quoting
     """
     def __init__(self, query: str, **kwargs: Any):
-        super().__init__(query=_sanitize(query), **kwargs)
+        # XXX always pass allow_leading_wildcard=False
+        # (take as an argument, defaulting to False)??
+
+        # quote slashes to avoid interpretation as /regexp/
+        # (which not only appear in URLs but are expensive as well)
+        # as done by _sanitize_es_query in mc_providers/mediacloud.py client library
+        sanitized = query.replace("/", r"\/")
+        super().__init__(query=sanitized, **kwargs)
 
 def _format_match(hit: Hit, expanded: bool = False) -> dict:
     """
-    from news-search-api/client.py EsClientWrapper.format_match
+    from news-search-api/client.py EsClientWrapper.format_match;
+    Unparsed (JSON safe), so can be returned by overview for caching.
+    Result passed to _match_to_row called for any data returned to user.
     """
     res = {
         "article_title": getattr(hit, "article_title", None),
@@ -757,7 +760,7 @@ class _ES_MetaData(_ES_Field):
     def get(self, hit: Hit) -> Any:
         return getattr(hit.meta, self.es_field_name)
 
-# map external (row) field name to _ES_Field instance
+# map external ("row") field name to _ES_Field instance
 # (with "get" method to fetch/parse field from Hit)
 _FIELDS: dict[str, _ES_Field] = {
     "id": _ES_MetaData("id"),
@@ -886,7 +889,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return None
 
-    def _fields(self, expanded: bool) -> list[Field]:
+    def _fields(self, expanded: bool) -> ES_Fieldnames:
         """
         from news-search-api/client.py QueryBuilder constructor:
         return list of fields for item, paged_items, all_items to return
@@ -895,20 +898,22 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         with only millisecond resolution, while the stored string usually
         has microsecond resolution.
         """
-        # original_url, full_language never passed up to user?!
-        fields: list[Field] = [
+        fields: ES_Fieldnames = [
             "article_title", "publication_date", "indexed_date",
-            "language", "full_language", "canonical_domain", "url", "original_url"
+            "language", "canonical_domain", "url",
+            # never returned to user: consider removing?
+            "full_language", "original_url"
         ]
         if expanded:
             fields.append("text_content")
         return fields
 
-    # Allow weighting in order to (experimentally) apply filters in
-    # most efficient order (most selective filter first).  An average
-    # day is about 500K stories for all sources.  1K stories/day would
-    # be a large source.  BUT adding a day means only expanding a
-    # range, not adding another term...
+    # Multipliers to allow weighting in order to (experimentally)
+    # apply filters in most efficient order (cheapest/most selective
+    # filter first).  If all sources and all days were equal they
+    # would be equally selective. BUT adding a day means only
+    # expanding a range. _LOWER_ values mean filter applied first.
+    # So test increasing SELECTOR_WEIGHT?
     SELECTOR_WEIGHT = 1         # domains, filters, url_search_strings
     DAY_WEIGHT = 1
 
@@ -916,12 +921,14 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
         """
         function to allow construction of DSL
-        rather than restorting to formatting/quoting query-string
-        only to have ES have to parse it??
-        For canonical_domain: "Match" query defaults to OR for space separated words
-        For url: use "Wildcard"??
-        Should initially take temp kwarg bool to allow A/B testing!!!
         """
+
+        # rather than restorting to formatting/quoting query-string
+        # only to have ES have to parse it??
+        # For canonical_domain: "Match" query defaults to OR for space separated words
+        # For url: use "Wildcard"??
+        # Should initially take (another) temp kwarg bool to allow A/B testing!!!
+        # elasticsearch_dsl allows "Query | Query"
 
         selector_clauses = cls._selector_query_clauses(kwargs)
         if selector_clauses:
@@ -929,6 +936,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             return FilterTuple(cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
                                SanitizedQueryString(query=sqs))
         else:
+            # return dummy record, will be weeded out
             return FilterTuple(0, None)
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
@@ -1352,9 +1360,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     # max controlled by index-level index.max_result_window, default is 10K.
     MAX_RANDOM_SAMPLE = 10000   # need pagination for more!
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                      limit: int, fields: list[str], **kwargs: Any) -> Iterable[list[dict[str,Any]]]:
+                      limit: int, fields: list[str], **kwargs: Any) -> AllItems:
         """
-        returns iterable to allow pagination, but actual pagination may
+        returns generator to allow pagination, but actual pagination may
         require more work.
 
         If pagination issues perfected, "fields" and "randomize" and "limit"
@@ -1378,7 +1386,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             raise ValueError(f"ES.random_sample limit must be between 1 and {self.MAX_RANDOM_SAMPLE}/nfields")
 
         # convert requested field names to ES field names
-        es_fields = [_FIELDS[f].es_field_name for f in fields if not _FIELDS[f].METADATA]
+        es_fields: ES_Fieldnames = [
+            _FIELDS[f].es_field_name for f in fields if not _FIELDS[f].METADATA
+        ]
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
@@ -1398,7 +1408,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .extra(size=limit) # everything in one query (for now)
 
         hits = self._search_hits(search)
-        return [[self._hit_to_row(hit, fields) for hit in hits]]
+        yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
     def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
                        **kwargs: Any) -> Iterable[list[dict[str,str]]]:

@@ -32,7 +32,7 @@ def set_default_timeout(timeout: int) -> None:
 
 Item: TypeAlias = dict[str, Any]           # differs between providers?
 Items: TypeAlias = list[Item]              # page of items
-AllItems: TypeAlias = Generator[Items, None, None]
+AllItems: TypeAlias = Iterable[Items]      # iterable of pages
 
 class Date(TypedDict):
     """
@@ -135,6 +135,7 @@ class ContentProvider(ABC):
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
 
+    # historically not a random semaple, see random_sample below!
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs: Any) -> list[dict]:
         raise NotImplementedError("Doesn't support sample content.")
@@ -170,6 +171,11 @@ class ContentProvider(ABC):
         # return just one page of items and a pagination token to get next page; implementing subclasses
         # should read in token, offset, or whatever else they need from `kwargs` to determine which page to return
         raise NotImplementedError("Doesn't support fetching all matching content.")
+
+    def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                      limit: int, fields: list[str], **kwargs: Any) -> AllItems:
+        # NOTE! could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
+        raise NotImplementedError("Doesn't support fetching random sample.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                                    **kwargs: Any) -> dict:
@@ -236,8 +242,8 @@ class ContentProvider(ABC):
         """
         default helper for _sampled_title_words: return a sampling of stories for top words
         """
-        # XXX force sort on something non-chronological???
-        return self.all_items(query, start_date, end_date, limit=sample_size)
+        return self.random_sample(query, start_date, end_date, sample_size,
+                                  fields=["title", "language"], **kwargs)
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
