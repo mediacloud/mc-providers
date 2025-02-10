@@ -1269,7 +1269,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         `kwargs` may contain: `sort_field` (str), `sort_order` (str)
         """
-        logger.debug("MCES._paged_articles q: %s: %s e: %s ps: %d",
+        logger.debug("MCES._paged_items q: %s: %s e: %s ps: %d",
                      query, start_date, end_date, page_size)
         self.trace(Trace.QSTR, "MCES._paged_items kw: %r", kwargs)
 
