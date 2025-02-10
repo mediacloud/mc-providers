@@ -62,6 +62,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                **kwargs: Any) -> Items:
         results = []
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("sample")
             this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
             results.extend(this_results)
         
@@ -74,6 +75,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         count = 0
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("count")
             count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
@@ -81,6 +83,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         counter: Counter = Counter()
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("count-over-time")
             results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
             countable = {i['date']: i['count'] for i in results}
             counter += Counter(countable)
@@ -94,6 +97,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     
     @CachingManager.cache()
     def item(self, item_id: str) -> Item:
+        self._incr_query_op("item")
         one_item = self._client.article(item_id)
         return self._match_to_row(one_item)
 
@@ -101,6 +105,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
         for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            self._incr_query_op("all-items")
             for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
                 yield self._matches_to_rows(page)
 
@@ -113,6 +118,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         """
         updated_kwargs = {**kwargs, 'chunk': False}
         query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
+        self._incr_query_op("paged-items")
         page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
@@ -140,6 +146,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         # An accumulator for the subqueries
         results_counter: Counter = Counter({})
         for subquery in chunked_queries:
+            self._incr_query_op("words")
             this_results = self._client.terms(subquery, start_date, end_date,
                                      self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
             
@@ -162,6 +169,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
         results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("languages")
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
@@ -178,6 +186,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         
         results_counter: Counter = Counter({})
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("sources")
             results = self._client.top_sources(subquery, start_date, end_date)
             countable = {source['name']: source['value'] for source in results}
             results_counter += Counter(countable)
@@ -358,6 +367,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     BASE_URL = ""               # SearchApiClient has default
+    STATS_NAME = "wbm"
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)  # will call get_client
@@ -437,6 +447,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     BASE_URL = "http://ramos.angwin:8000/v1/"
     INDEX_PREFIX = "mc_search"
+    STATS_NAME = "nsa"
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
@@ -632,6 +643,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # no chunking on MC
         q = self._assembled_query_str(query, **kwargs)
         self._prune_kwargs(kwargs)
+        self._incr_query_op("overview")
         return self._client._overview_query(q, start_date, end_date, **kwargs)
 
     @classmethod
@@ -829,6 +841,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
     WORDS_SAMPLE = 5000
+    STATS_NAME = "es"
 
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
@@ -1228,6 +1241,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
+        self._incr_query_op("overview")
         res = self._search(search) # run search, need .aggregations & .hits
 
         hits = res.hits            # property
@@ -1249,6 +1263,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         s = Search(index=self._index, using=self._es)\
             .query(Match(_id=item_id))\
             .source(includes=self._fields(expanded)) 
+        self._incr_query_op("item")
         hits = self._search_hits(s)
         if not hits:
             return {}
@@ -1305,6 +1320,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # results.
             search = search.extra(search_after=after)
 
+        self._incr_query_op("paged-items")
         hits = self._search_hits(search)
         if not hits:
             return ([], None)
@@ -1397,6 +1413,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .source(es_fields)\
                      .extra(size=page_size)
 
+        self._incr_query_op("random-sample")
         hits = self._search_hits(search)
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 

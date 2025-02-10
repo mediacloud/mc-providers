@@ -8,6 +8,9 @@ from abc import ABC
 from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
+# PyPI:
+import statsd
+
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
 from .language import terms_without_stopwords
 
@@ -73,6 +76,7 @@ class Term(TypedDict):
 
 class Trace:
     # less noisy things, with lower numbers
+    STATS = 5
     ARGS = 10            # constructor args
     RESULTS = 20
     QSTR = 50            # query string/args
@@ -87,6 +91,8 @@ class ContentProvider(ABC):
     WORDS_SAMPLE = 500
 
     LANGUAGE_SAMPLE = 1000
+
+    STAT_NAME = "FIXME"         # MUST OVERRIDE!
 
     # default values for _env_val
     # classes which DON'T require a value should define:
@@ -131,6 +137,17 @@ class ContentProvider(ABC):
         # identify software making request
         # (could be used in User-Agent strings)
         self._software_id = self._env_str(software_id, "SOFTWARE_ID")
+
+        # set in web-search config
+        statsd_host = os.environ.get("STATSD_HOST")
+        statsd_prefix = os.environ.get("STATSD_PREFIX")
+        if statsd_host and statsd_prefix:
+            self._statsd_client = statsd.StatsdClient(
+                statsd_host, None,
+                f"{statsd_prefix}.provider.{self.STAT_NAME}")
+        else:
+            self._statsd_client = None
+
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -385,6 +402,29 @@ class ContentProvider(ABC):
         """
         if cls._trace >= level:
             logger.debug(format, *args)
+
+    def __incr(self, name) -> None:
+        """
+        statsd creates two files per counter.
+        create a new helper (like _incr_query_op)
+        for each new class of counters
+        """
+        self.trace(Trace.STATS, "incr %s", name)
+        if self._statsd_client:
+            self._statsd_client.incr(name)
+
+    def _incr_query_op(self, op: str) -> None:
+        """
+        called each time a backing client is called
+        op name should be related to Provider.method (with dashes)
+        """
+        op = op.replace("_", "-")
+        self.__incr(f"query.op_{op}") # using label_value
+
+    def _timing(self, name, ms: float) -> None:
+        # for timings statsd makes 54 files (38MB per metric per app)
+        # so easy to waste lots of space....
+        raise NotImplementedError("statsd timing not yet implemented")
 
 # not used??
 def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
