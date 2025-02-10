@@ -1271,7 +1271,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         logger.debug("MCES._paged_articles q: %s: %s e: %s ps: %d",
                      query, start_date, end_date, page_size)
-        self.trace(Trace.QSTR, "MCES._paged_articles kw: %r", kwargs)
+        self.trace(Trace.QSTR, "MCES._paged_items kw: %r", kwargs)
 
         page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
@@ -1367,7 +1367,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         To implement pagination in web-search API, would need to have
         a method here that takes and returns a pagination token that
-        this method calls...
+        this method calls...  Perhaps paged_items could do the job
+        when passed a "randomize" argument???
         """
         if not fields:
             # _COULD_ default to everything, but make user think
