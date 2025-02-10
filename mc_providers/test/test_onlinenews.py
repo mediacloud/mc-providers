@@ -428,6 +428,17 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert story['language'] == 'en'
         assert story['media_name'] == 'cnn.com'
 
+    def test_equal_weight(self):
+        # assumes equal weights: could construct arguments (for integer weights)
+        domains = ["nytimes.com"]
+        days = 1
+        assert (len(domains) * self._provider.SELECTOR_WEIGHT == days * self._provider.DAY_WEIGHT)
+        query = "biden"
+        start_date = dt.datetime(2024, 12, 1)
+        end_date = start_date + dt.timedelta(days=days-1)
+        breakpoint()
+        # unfixed code died with "TypeError: '<' not supported between instances of 'SanitizedQueryString' and 'Range'"
+        page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, page_size=1)
 
 
 @pytest.mark.skipif(IN_GITHUB_CI_WORKFLOW, reason="requires VPN tunnel to Media Cloud News Search API server")

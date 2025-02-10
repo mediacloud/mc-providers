@@ -4,7 +4,7 @@ import logging
 import os
 import random
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, TypeAlias, TypedDict
+from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, TypeAlias, TypedDict
 
 # PyPI
 import ciso8601
@@ -662,7 +662,10 @@ from elasticsearch_dsl.utils import AttrDict
 from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, ProviderException, TemporaryProviderException
 
 Field: TypeAlias = str | InstrumentedField # quiet mypy complaints
-FilterTuple: TypeAlias = tuple[int, Query | None]
+
+class FilterTuple(NamedTuple):
+    weight: int
+    query: Query | None
 
 _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 
@@ -878,10 +881,10 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         selector_clauses = cls._selector_query_clauses(kwargs)
         if selector_clauses:
             sqs = cls._selector_query_string_from_clauses(selector_clauses)
-            return (cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
-                    SanitizedQueryString(query=sqs))
+            return FilterTuple(cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
+                               SanitizedQueryString(query=sqs))
         else:
-            return (0, None)
+            return FilterTuple(0, None)
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
                      expanded: bool = False, source: bool = True, **kwargs: Any) -> Search:
@@ -925,17 +928,18 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         days = (end_date - start_date).days + 1
         filters : list[FilterTuple] = [
-            (days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
+            FilterTuple(days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
             self._selector_filter_tuple(kwargs)
             # could include languages (etc) here
         ]
 
         # try applying more selective queries (fewer results) first
-        filters.sort()
-        for weight, query in filters:
-            if query:
+        # key function avoids attempts to compare Query objects when tied!
+        filters.sort(key=lambda ft : ft.weight)
+        for ft in filters:
+            if ft.query:
                 # ends up as list under bool.filter:
-                s = s.filter(query)
+                s = s.filter(ft.query)
 
         if source:              # return source (fields)?
             return s.source(self._fields(expanded))
