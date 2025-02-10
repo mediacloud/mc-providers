@@ -668,7 +668,7 @@ ES_Fieldname: TypeAlias = str | InstrumentedField # quiet mypy complaints
 ES_Fieldnames: TypeAlias = list[ES_Fieldname]
 
 class FilterTuple(NamedTuple):
-    weight: int
+    weighted: int               # apply smaller values (result sets) first
     query: Query | None
 
 _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
@@ -988,7 +988,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # try applying more selective queries (fewer results) first
         # key function avoids attempts to compare Query objects when tied!
-        filters.sort(key=lambda ft : ft.weight)
+        filters.sort(key=lambda ft : ft.weighted)
         for ft in filters:
             if ft.query:
                 # ends up as list under bool.filter:

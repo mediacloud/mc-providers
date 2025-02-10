@@ -436,7 +436,6 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "biden"
         start_date = dt.datetime(2024, 12, 1)
         end_date = start_date + dt.timedelta(days=days-1)
-        breakpoint()
         # unfixed code died with "TypeError: '<' not supported between instances of 'SanitizedQueryString' and 'Range'"
         page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, page_size=1)
 
