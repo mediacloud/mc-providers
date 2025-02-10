@@ -1358,34 +1358,23 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return res
 
     # max controlled by index-level index.max_result_window, default is 10K.
-    MAX_RANDOM_SAMPLE = 10000   # need pagination for more!
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                      limit: int, fields: list[str], **kwargs: Any) -> AllItems:
+                      page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
         """
-        returns generator to allow pagination, but actual pagination may
-        require more work.
+        Returns generator to allow pagination, but actual pagination may
+        require more work (passing "seed" and "field" argument to
+        RandomSample).  Maybe foist issue on caller and require "seed"?
 
-        If pagination issues perfected, "fields" and "randomize" and "limit"
-        _COULD_ be kwargs processed by _basic_query?!!!
-
-        _PERHAPS_ just be up-front, and have randomize require
-        passing seed and field arguments for RandomScore?
-
-        To discourage indescriminate use/impact allow
-        MAX_RANDOM_SAMPLE rows for single field query, half that for
-        two fields and so on...  Some fields are (obviously) more
-        expensive than others (language vs full_text!)  Could have
-        _ES_Field take a per-field weight as optional argument!
+        To implement pagination in web-search API, would need to have
+        a method here that takes and returns a pagination token that
+        this method calls...
         """
         if not fields:
             # _COULD_ default to everything, but make user think
             # about what they need!
             raise ValueError("ES.random_sample requires fields list")
 
-        if limit < 1 or limit > self.MAX_RANDOM_SAMPLE/len(fields):
-            raise ValueError(f"ES.random_sample limit must be between 1 and {self.MAX_RANDOM_SAMPLE}/nfields")
-
-        # convert requested field names to ES field names
+        # convert requested external field names to ES field names
         es_fields: ES_Fieldnames = [
             _FIELDS[f].es_field_name for f in fields if not _FIELDS[f].METADATA
         ]
@@ -1405,7 +1394,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                          )
                      )\
                      .source(es_fields)\
-                     .extra(size=limit) # everything in one query (for now)
+                     .extra(size=page_size)
 
         hits = self._search_hits(search)
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page

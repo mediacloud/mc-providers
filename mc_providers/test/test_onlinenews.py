@@ -440,20 +440,20 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         # unfixed code died with "TypeError: '<' not supported between instances of 'SanitizedQueryString' and 'Range'"
         page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, page_size=1)
 
-    def _collect_random_results(self, query, fields, limit, start, end):
+    def _collect_random_results(self, query, fields, page_size, start, end):
         start_date = start or dt.datetime(2023, 1, 1)
         end_date = end or dt.datetime(2023, 12, 31)
         results = []
         # currently returns only one page, but be prepared!
         for page in self._provider.random_sample(query, start_date, end_date,
-                                                 limit=limit, fields=fields):
+                                                 page_size=page_size, fields=fields):
             results.extend(page)
         return results
 
-    def _test_random_sample(self, fields, limit, start=None, end=None):
-        # check limit filled
-        results = self._collect_random_results("biden", fields, limit, start, end)
-        assert len(results) == limit
+    def _test_random_sample(self, fields, page_size, start=None, end=None):
+        # check page_size filled
+        results = self._collect_random_results("biden", fields, page_size, start, end)
+        assert len(results) == page_size
 
         fset = set(fields)
         for item in results:
@@ -486,7 +486,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
     def test_random_sample_all(self):
         self._test_random_sample(["id", "indexed_date", "language",
                                   "media_name", "media_url", "publish_date",
-                                  "text", "title", "url"], limit=2)
+                                  "text", "title", "url"], page_size=2)
 
 @pytest.mark.skipif(IN_GITHUB_CI_WORKFLOW, reason="requires VPN tunnel to Media Cloud News Search API server")
 class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):

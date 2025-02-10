@@ -173,7 +173,7 @@ class ContentProvider(ABC):
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                      limit: int, fields: list[str], **kwargs: Any) -> AllItems:
+                      page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
         # NOTE! could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
         raise NotImplementedError("Doesn't support fetching random sample.")
 
@@ -259,6 +259,12 @@ class ContentProvider(ABC):
         for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
             [counts.update(terms_without_stopwords(t.get('language', 'UNK'), t['title'], remove_punctuation)) for t in page  if 'title' in t]
+            needed = sample_size - sampled_count
+            if needed <= 0:
+                break           # quit once sample_size filled
+            if needed < sample_size:
+                sample_size = needed # don't overfill
+
         # clean up results
         results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
