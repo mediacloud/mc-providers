@@ -668,7 +668,7 @@ ES_Fieldname: TypeAlias = str | InstrumentedField # quiet mypy complaints
 ES_Fieldnames: TypeAlias = list[ES_Fieldname]
 
 class FilterTuple(NamedTuple):
-    weight: int | float
+    weight: int
     query: Query | None
 
 _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
