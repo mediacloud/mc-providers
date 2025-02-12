@@ -3,23 +3,16 @@ from typing import Any, List, NamedTuple, Optional
 
 from .exceptions import UnknownProviderException, MissingRequiredValue
 from .provider import ContentProvider, DEFAULT_TIMEOUT, set_default_timeout
-from .reddit import RedditPushshiftProvider
-from .twitter import TwitterTwitterProvider
-from .youtube import YouTubeYouTubeProvider
 from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider, OnlineNewsMediaCloudESProvider
 
 logger = logging.getLogger(__name__)
 
 # static list matching topics/info results
-PLATFORM_TWITTER = 'twitter'
-PLATFORM_REDDIT = 'reddit'
-PLATFORM_YOUTUBE = 'youtube'
+
 PLATFORM_ONLINE_NEWS = 'onlinenews'
 
 # static list matching topics/info results
-PLATFORM_SOURCE_PUSHSHIFT = 'pushshift'
-PLATFORM_SOURCE_TWITTER = 'twitter'
-PLATFORM_SOURCE_YOUTUBE = 'youtube'
+
 PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
 PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"     # direct to elasticsearch
 PLATFORM_SOURCE_MEDIA_CLOUD_OLD = "mediacloud-old" # news-search-api based
@@ -33,9 +26,6 @@ def provider_name(platform: str, source: str) -> str:
 # if each class had PLATFORM_NAME and SOURCE_NAME members,
 # this map could ve constructed from just a list of classes.
 _PROVIDER_MAP: dict[str, type[ContentProvider]] = {
-    provider_name(PLATFORM_TWITTER, PLATFORM_SOURCE_TWITTER): TwitterTwitterProvider,
-    provider_name(PLATFORM_YOUTUBE, PLATFORM_SOURCE_YOUTUBE): RedditPushshiftProvider,
-    provider_name(PLATFORM_REDDIT, PLATFORM_SOURCE_PUSHSHIFT): YouTubeYouTubeProvider,
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): OnlineNewsWaybackMachineProvider,
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_OLD): OnlineNewsMediaCloudProvider,
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): OnlineNewsMediaCloudESProvider,
