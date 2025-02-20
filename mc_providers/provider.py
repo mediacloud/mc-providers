@@ -9,10 +9,10 @@ from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
 # PyPI:
-import statsd
+from sigfig import sigfig
 
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
-from .language import terms_without_stopwords
+from .language import terms_without_stopwords_list
 
 logger = logging.getLogger(__name__) # for trace
 logger.setLevel(logging.DEBUG)
@@ -37,6 +37,13 @@ Item: TypeAlias = dict[str, Any]           # differs between providers?
 Items: TypeAlias = list[Item]              # page of items
 AllItems: TypeAlias = Iterable[Items]      # iterable of pages
 
+class _DateCount(TypedDict):
+    """
+    for _sum_count_by_date result
+    """
+    date: dt.date
+    count: int
+
 class Date(TypedDict):
     """
     element of counts list in count_over_time return
@@ -47,9 +54,28 @@ class Date(TypedDict):
 
 class CountOverTime(TypedDict):
     """
-    return type for count_over_time
+    return type for count_over_time method
     """
     counts: list[Date]
+
+class _CombinedDateInfo(TypedDict, total=False):
+    """
+    element of counts list in normalized_count_over_time return
+    returned by _combined_split_and_normalized_counts
+    NOTE! total=False to allow incremental creation in existing code
+    """
+    date: dt.date
+    total_count: int
+    count: int
+    ratio: float
+
+class NormalizedCountOverTime(TypedDict):
+    """
+    return type for normalized_count_over_time method
+    """
+    counts: list[_CombinedDateInfo]
+    total: int
+    normalized_total: int
 
 class Language(TypedDict):
     """
@@ -57,7 +83,8 @@ class Language(TypedDict):
     """
     language: str
     value: int
-    ratio: float                # really fraction?!
+    ratio: float                # rounded
+    sample_size: int
 
 class Source(TypedDict):
     """
@@ -66,13 +93,19 @@ class Source(TypedDict):
     source: str
     count: int
 
-class Term(TypedDict):
+class _Term(TypedDict):
     """
-    list element in return value for words method
+    list element in return value for words method.
+    use make_term, terms_from_counts to create
     """
     term: str
-    count: int
-    ratio: float                # really fraction?!
+    count: int                  # total number of appearances
+    ratio: float                # now rounded!
+    doc_count: int              # number of documents appeared in
+    doc_ratio: float            # rounded
+    sample_size: int            # number of documents sampled
+
+Terms: TypeAlias = list[_Term]
 
 class Trace:
     # less noisy things, with lower numbers
@@ -82,6 +115,39 @@ class Trace:
     QSTR = 50            # query string/args
     # even more noisy things, with higher numbers
     ALL = 1000
+
+def ratio_with_sigfigs(count: int, sample_size: int) -> float:
+    """
+    try to prevent fractions with 17 or 18 digits
+    (CSV and JSON formatting don't appear to do ANY rounding)
+    """
+    sf = min(len(str(count)), len(str(sample_size)))
+    # in theory the above is correct, but force three digits:
+    sf = max(sf, 3)
+    # disable warnings: carps about 500/1000 having one sigfig!
+    # https://github.com/Bobzoon/SigFigs/ implements division with sigfigs,
+    # but is not a PyPI package.
+    return sigfig.round(count / sample_size, sigfigs=sf, warn=False)
+
+def make_term(term: str, count: int, doc_count: int, sample_size: int) -> _Term:
+    """
+    the one place to format a dict for return from "words" method
+    """
+    return _Term(term=term, count=count,
+                 ratio=ratio_with_sigfigs(count, sample_size),
+                 doc_count=doc_count,
+                 doc_ratio=ratio_with_sigfigs(doc_count, sample_size),
+                 sample_size=sample_size)
+
+def terms_from_counts(term_counts: collections.Counter[str],
+                      doc_counts: collections.Counter[str],
+                      sample_size: int,
+                      limit: int) -> Terms:
+    """
+    format a Counter for return from library
+    """
+    return [make_term(term, count, doc_counts[term], sample_size)
+            for term, count in term_counts.most_common(limit)]
 
 class ContentProvider(ABC):
     """
@@ -141,13 +207,12 @@ class ContentProvider(ABC):
         # set in web-search config
         statsd_host = os.environ.get("STATSD_HOST")
         statsd_prefix = os.environ.get("STATSD_PREFIX")
+        self._statsd_client: "statsd.StatsdClient" | None = None
         if statsd_host and statsd_prefix:
+            import statsd       # avoid warnings about unclosed socket
             self._statsd_client = statsd.StatsdClient(
                 statsd_host, None,
                 f"{statsd_prefix}.provider.{self.STAT_NAME}")
-        else:
-            self._statsd_client = None
-
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -163,11 +228,11 @@ class ContentProvider(ABC):
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
-    def item(self, item_id: str) -> dict:
+    def item(self, item_id: str) -> Item:
         raise NotImplementedError("Doesn't support fetching individual content.")
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> list[Term]:
+              **kwargs: Any) -> Terms:
         raise NotImplementedError("Doesn't support top words.")
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> list[Language]:
@@ -195,7 +260,7 @@ class ContentProvider(ABC):
         raise NotImplementedError("Doesn't support fetching random sample.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                                   **kwargs: Any) -> dict:
+                                   **kwargs: Any) -> NormalizedCountOverTime:
         """
         Useful for rendering attention-over-time charts with extra information suitable for normalizing
         HACK: calling _sum_count_by_date for now to solve a problem specific to the Media Cloud provider
@@ -211,14 +276,14 @@ class ContentProvider(ABC):
         no_query_content_counts = self._sum_count_by_date(
             self.count_over_time(self._everything_query(), start_date, end_date,**kwargs)['counts'])
         no_query_total = sum([d['count'] for d in no_query_content_counts])
-        return {
-            'counts': _combined_split_and_normalized_counts(matching_content_counts, no_query_content_counts),
-            'total': matching_total,
-            'normalized_total': no_query_total,
-        }
+        return NormalizedCountOverTime(
+            counts=_combined_split_and_normalized_counts(matching_content_counts, no_query_content_counts),
+            total=matching_total,
+            normalized_total=no_query_total,
+        )
 
     @classmethod
-    def _sum_count_by_date(cls, counts: list[dict]) -> list[Date]:
+    def _sum_count_by_date(cls, counts: list[Date]) -> list[_DateCount]:
         """
         Given a list of counts, sum the counts by date
         :param counts:
@@ -251,7 +316,11 @@ class ContentProvider(ABC):
             sampled_count += len(page)
             [counts.update(t.get('language', "UNK") for t in page)]
         # clean up results
-        results = [Language(language=w, value=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        results = [Language(language=w,
+                            value=c,
+                            ratio=ratio_with_sigfigs(c, sampled_count), # sampled data
+                            sample_size=sampled_count)
+                   for w, c in counts.most_common(limit)]
         return results
 
     def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
@@ -264,26 +333,42 @@ class ContentProvider(ABC):
 
     # use this if you need to sample some content for top words
     def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs: Any) -> list[Term]:
+                             **kwargs: Any) -> Terms:
         # support sample_size kwarg
         sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
-        # NOTE! english stopwords contain contractions!!!
-        remove_punctuation = bool(kwargs.pop("remove_punctuation", True)) # XXX TEMP?
 
-        # grab a sample and count terms as we page through it
+        # grab a sample and collect by like language as we page through it
+        # (spacy tokenizer has high startup cost)
+        titles: dict[str, list[str]] = collections.defaultdict(list)
         sampled_count = 0
-        counts: collections.Counter = collections.Counter()
+        title_count = 0
         for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
             sampled_count += len(page)
-            [counts.update(terms_without_stopwords(t.get('language', 'UNK'), t['title'], remove_punctuation)) for t in page  if 'title' in t]
+            for story in page:
+                if "title" in story:
+                    titles[story.get("language", 'UNK')].append(story["title"])
+                    title_count += 1
+
             needed = sample_size - sampled_count
             if needed <= 0:
                 break           # quit once sample_size filled
             if needed < sample_size:
                 sample_size = needed # don't overfill
 
-        # clean up results
-        results = [Term(term=w, count=c, ratio=c/sampled_count) for w, c in counts.most_common(limit)]
+        # now tokenize, removing stopwords and tally
+        term_counts: collections.Counter = collections.Counter() # total appearances of a term
+        doc_counts: collections.Counter = collections.Counter()  # number of documents with a term
+
+        # spacy init is expensive, so call with bunches of titles
+        # in groups by language, for stopword processing
+        for language, title_list in titles.items():
+            for word_list in terms_without_stopwords_list(language, title_list): # takes min_length
+                this_doc_counts = collections.Counter(word_list)
+                term_counts.update(this_doc_counts)
+                doc_counts.update(this_doc_counts.keys())
+
+        # format results (used to use sampled_count)
+        results = terms_from_counts(term_counts, doc_counts, title_count, limit)
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results
 
@@ -362,7 +447,7 @@ class ContentProvider(ABC):
 
         env_var = self._env_var(variable)
         try:
-            # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exits.
+            # 1. Look for OBJ_NAME_VARIABLE env var, returns value if it exists.
             val = int(os.environ[env_var])
             self.trace(Trace.ARGS, "%r env %s %d", self, env_var, val)
             return val
@@ -403,7 +488,7 @@ class ContentProvider(ABC):
         if cls._trace >= level:
             logger.debug(format, *args)
 
-    def __incr(self, name) -> None:
+    def __incr(self, name: str) -> None:
         """
         statsd creates two files per counter.
         create a new helper (like _incr_query_op)
@@ -421,44 +506,16 @@ class ContentProvider(ABC):
         op = op.replace("_", "-")
         self.__incr(f"query.op_{op}") # using label_value
 
-    def _timing(self, name, ms: float) -> None:
+    def _timing(self, name: str, ms: float) -> None:
         # for timings statsd makes 54 files (38MB per metric per app)
         # so easy to waste lots of space....
         raise NotImplementedError("statsd timing not yet implemented")
 
-# not used??
-def add_missing_dates_to_split_story_counts(counts, start, end, period="day"):
-    if start is None and end is None:
-        return counts
-    new_counts = []
-    current = start.date()
-    while current <= end.date():
-        date_string = current.strftime("%Y-%m-%d %H:%M:%S")
-        existing_count = next((r for r in counts if r['date'] == date_string), None)
-        if existing_count:
-            new_counts.append(existing_count)
-        else:
-            new_counts.append({'date': date_string, 'count': 0})
-        if period == "day":
-            current += dt.timedelta(days=1)
-        elif period == "month":
-            current += dt.timedelta(days=31)
-        elif period == "year":
-            current += dt.timedelta(days=365)
-        else:
-            # PB: RuntimeError is for internal Python errors???
-            raise RuntimeError("Unsupport time period for filling in missing dates - {}".format(period))
-    return new_counts
-
-
 # used in normalized_count_over_time
-def _combined_split_and_normalized_counts(matching_results, total_results):
+def _combined_split_and_normalized_counts(matching_results: list[_DateCount], total_results: list[_DateCount]) -> list[_CombinedDateInfo]:
     counts = []
     for day in total_results:
-        day_info = {
-            'date': day['date'],
-            'total_count': day['count']
-        }
+        day_info = _CombinedDateInfo(date=day['date'], total_count=day['count'])
         matching = [d for d in matching_results if d['date'] == day['date']]
         if len(matching) == 0:
             day_info['count'] = 0
@@ -469,5 +526,5 @@ def _combined_split_and_normalized_counts(matching_results, total_results):
         else:
             day_info['ratio'] = float(day_info['count']) / float(day['count'])
         counts.append(day_info)
-    counts = sorted(counts, key=itemgetter('date'))
+    counts.sort(key=itemgetter('date'))
     return counts

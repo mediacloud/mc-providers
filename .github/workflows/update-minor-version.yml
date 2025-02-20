@@ -1,0 +1,47 @@
+name: Update Minor Version Release
+
+on: 
+  release:
+    types: [published]
+
+jobs:
+  update_minor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Extract Minor Tag
+        id: extract
+        run: |
+          # Remove the "refs/tags/" prefix to get the tag name
+          TAG=${GITHUB_REF#refs/tags/}
+          echo "Current tag: $TAG"
+          # Expect tag format X.Y.Z (e.g. 3.2.1)
+          if [[ "$TAG" =~ ^(v[0-9]+\.[0-9]+)\.[0-9]+$ ]]; then
+            MINOR_VERSION="${BASH_REMATCH[1]}"
+            MINOR_TAG="${MINOR_VERSION}.latest"
+            echo "Extracted minor tag: $MINOR_TAG"
+            echo "minor=$MINOR_TAG" >> $GITHUB_OUTPUT
+            echo "minor_version=$MINOR_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not match semver X.Y.Z pattern. Skipping minor release update."
+            exit 0
+          fi
+
+      - name: Update or Create Minor Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MINOR_TAG="${{ steps.extract.outputs.minor }}"
+          MINOR_VERSION="${{ steps.extract.outputs.minor_version }}"
+          echo "Minor release tag: $MINOR_TAG"
+          # Check if a minor release already exists; if so, delete it so we can re-create it.
+          if gh release view "$MINOR_TAG" > /dev/null 2>&1; then
+            echo "Existing minor release found. Deleting $MINOR_TAG..."
+            gh release delete "$MINOR_TAG" --yes
+          fi
+          echo "Creating minor release $MINOR_TAG..."
+          gh release create "$MINOR_TAG" \
+            --notes "This release tracks the latest patch for the ${MINOR_VERSION} series." \
+            --target "${GITHUB_SHA}"

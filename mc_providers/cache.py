@@ -2,6 +2,12 @@ from typing import Callable, Iterable, Optional
 
 from .provider import ContentProvider
 
+from typing import ParamSpec, TypeVar
+
+Param = ParamSpec("Param")
+RetType = TypeVar("RetType")
+
+
 class CachingManager():
     """
     Use this to set caching functionality on the providers library for whatever system your using
@@ -12,14 +18,15 @@ class CachingManager():
     """
     cache_function = None
 
+    # typing from https://stackoverflow.com/questions/47060133/python-3-type-hinting-for-decorator
     @classmethod
-    def cache(cls, custom_prefix_for_key: Optional[str] = None, kwargs_to_ignore: Iterable[str] = []):
+    def cache(cls, custom_prefix_for_key: Optional[str] = None, kwargs_to_ignore: Iterable[str] = []) -> Callable[[Callable[Param, RetType]], Callable[Param, RetType]]:
         """
         @param custom_prefix_for_key: if specified, will be used in place of function name for cache_key generation
         """
-        def decorator(fn: Callable):
+        def decorator(fn: Callable[Param, RetType]) -> Callable[Param, RetType]:
             # WISH: detect if 'fn' is being declared as a method to a ContentProvider!!
-            def wrapper(*args, **kwargs):
+            def wrapper(*args:Param.args, **kwargs:Param.kwargs) -> RetType:
                 # blindly assume that everything decorated is a ContentProvider method!
                 inst = args[0]
                 assert isinstance(inst, ContentProvider)

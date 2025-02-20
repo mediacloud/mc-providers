@@ -1,0 +1,20 @@
+# copied from es-tools, copied from story-indexer
+# just mypy (no formatting)
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+repos:
+  - repo: http://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      # run mypy via wrapper to make sure "pre-commit" optional
+      # dependencies in pyproject.toml installed (to keep DRY).
+      - id: mypy
+        entry: ./.pre-commit-run.sh mypy
+        additional_dependencies: ["pip>=22.0"]
+        # without implicit --ignore-missing-imports:
+        args: []
+
+# NOTE! omits deprecated providers AND nsa client library
+exclude: "/test/|twitter.py|reddit.py|youtube.py|mediacloud.py"
+
+

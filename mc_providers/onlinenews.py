@@ -13,7 +13,7 @@ import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Term, Trace
+from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Terms, Trace, make_term, terms_from_counts
 from .cache import CachingManager
 from .mediacloud import MCSearchApiClient
 
@@ -46,7 +46,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         super().__init__(**kwargs)
         self._client = self.get_client()
 
-    def get_client(self):
+    def get_client(self) -> Any:
         raise NotImplementedError("Abstract provider class should not be implemented directly")
 
     @classmethod
@@ -125,7 +125,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # Chunk'd
     @CachingManager.cache()
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> List[Term]:
+              **kwargs: Any) -> Terms:
         chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
 
         # first figure out the dominant languages, so we can remove appropriate stopwords.
@@ -156,7 +156,8 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results = dict(results_counter)
             
         # and clean up results to return
-        top_terms = [Term(term=t.lower(), count=c, ratio=c/sample_size) for t, c in results.items()
+        top_terms = [make_term(term=t.lower(), count=c, doc_count=0, sample_size=sample_size)
+                     for t, c in results.items()
                      if t.lower() not in stopwords]
         top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
         return top_terms
@@ -173,8 +174,12 @@ class OnlineNewsAbstractProvider(ContentProvider):
             this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
             countable = {item["name"]: item["value"] for item in this_languages}
             results_counter += Counter(countable)
-        
-        top_languages = [Language(language=name, value=value, ratio=value/matching_count) for name, value in results_counter.items()]
+
+        # if client returns aggregated count of languages across all documents,
+        # no rounding should be applied (exact counts)
+        top_languages = [Language(language=name, value=value,
+                                  ratio=value/matching_count, sample_size=matching_count)
+                         for name, value in results_counter.items()]
         
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
@@ -367,12 +372,12 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     All these endpoints accept a `domains: List[str]` keyword arg.
     """
     BASE_URL = ""               # SearchApiClient has default
-    STATS_NAME = "wbm"
+    STAT_NAME = "wbm"
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)  # will call get_client
 
-    def get_client(self):
+    def get_client(self) -> Any:
         client = SearchApiClient("mediacloud", self._base_url)
         if self._timeout:
             client.TIMEOUT_SECS = self._timeout
@@ -447,7 +452,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     BASE_URL = "http://ramos.angwin:8000/v1/"
     INDEX_PREFIX = "mc_search"
-    STATS_NAME = "nsa"
+    STAT_NAME = "nsa"
 
     def __init__(self, **kwargs: Any):
         # maybe take comma separated list?
@@ -455,7 +460,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
         super().__init__(**kwargs)
 
-    def get_client(self):
+    def get_client(self) -> Any:
         api_client = MCSearchApiClient(collection=self._index, api_base_url=self._base_url)
         if self._timeout:
             api_client.TIMEOUT_SECS = self._timeout
@@ -492,7 +497,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         used to test _overview_query results
         """
-        return self._client._is_no_results(results)
+        return self._client._is_no_results(results) # type: ignore[no-any-return]
 
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
@@ -608,7 +613,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if self._is_no_results(results):
             return []
         matches = self._count_from_overview(results)
-        top_languages = [Language(language=name, value=value, ratio=value/matches)
+        # NOTE! value and matches are exact (population counts, not based on sampling)
+        # so they are "exact", and no rounding applied to ratio!
+        top_languages = [Language(language=name, value=value, ratio=value/matches,
+                                  sample_size=matches)
                          for name, value in results['toplangs'].items()]
         logger.debug("MC.languages: _overview returned %d items", len(top_languages))
 
@@ -644,7 +652,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         q = self._assembled_query_str(query, **kwargs)
         self._prune_kwargs(kwargs)
         self._incr_query_op("overview")
-        return self._client._overview_query(q, start_date, end_date, **kwargs)
+        return self._client._overview_query(q, start_date, end_date, **kwargs) # type: ignore[no-any-return]
 
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
@@ -841,7 +849,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
     WORDS_SAMPLE = 5000
-    STATS_NAME = "es"
+    STAT_NAME = "es"
 
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
@@ -896,7 +904,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                                                randomize_nodes_in_pool=True)
 
 
-    def get_client(self):
+    def get_client(self) -> Any:
         """
         called from OnlineNewsAbstractProvider constructor to set _client
         """
@@ -1030,10 +1038,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         """
         return [self._index]
 
-    def _search(self, search: Search) -> Response:
+    def _search(self, search: Search, op: str) -> Response:
         """
         one place to send queries to ES, for logging
         """
+        self._incr_query_op(op)
         t0 = time.monotonic()
         execute_args = {}
         if self._caching < 0:
@@ -1084,11 +1093,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         return res
 
-    def _search_hits(self, search: Search) -> list[Hit]:
+    def _search_hits(self, search: Search, op: str) -> list[Hit]:
         """
         perform search, return list of Hit
         """
-        res = self._search(search)
+        res = self._search(search, op)
         return res.hits
 
     def _process_profile_data(self, pdata: AttrDict) -> None:
@@ -1221,12 +1230,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         return ProviderParseException(first, rest)
 
     @CachingManager.cache('overview')
-    def _overview_query(self, q: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
+    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
         """
         from news-search-api/api.py
         """
 
-        logger.debug("MCES._overview %s %s %s", q, start_date, end_date)
+        logger.debug("MCES._overview %s %s %s", query, start_date, end_date)
         self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
@@ -1235,19 +1244,18 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         AGG_LANG = "toplangs"
         AGG_DOMAIN = "topdomains"
 
-        search = self._basic_search(q, start_date, end_date, **kwargs)
+        search = self._basic_search(query, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True)
-        self._incr_query_op("overview")
-        res = self._search(search) # run search, need .aggregations & .hits
+        res = self._search(search, "overview") # run search, need .aggregations & .hits
 
         hits = res.hits            # property
         aggs = res.aggregations
         return Overview(
-            query=q,
+            query=query,
             # res.hits.total.value documented at
             # https://elasticsearch-dsl.readthedocs.io/en/stable/search_dsl.html#response
             total=hits.total.value, # type: ignore[attr-defined]
@@ -1263,8 +1271,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         s = Search(index=self._index, using=self._es)\
             .query(Match(_id=item_id))\
             .source(includes=self._fields(expanded)) 
-        self._incr_query_op("item")
-        hits = self._search_hits(s)
+        hits = self._search_hits(s, "item")
         if not hits:
             return {}
 
@@ -1320,8 +1327,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # results.
             search = search.extra(search_after=after)
 
-        self._incr_query_op("paged-items")
-        hits = self._search_hits(search)
+        hits = self._search_hits(search, "paged-items")
         if not hits:
             return ([], None)
 
@@ -1364,13 +1370,16 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         format a Hit returned by ES into an external "row".
         fields is a list of external/row field names to be returned
         (from _format_match (above) AND _matches to rows)
+        Omits fields not present in Hit
         """
         # need to iterate over _external_ names rather than just returned
         # fields to be able to return metadata fields
-        res = {
-            field: _FIELDS[field].get(hit)
-            for field in fields
-        }
+        res = {}
+        for field in fields:
+            try:
+                res[field] = _FIELDS[field].get(hit)
+            except AttributeError:
+                pass
         return res
 
     # max controlled by index-level index.max_result_window, default is 10K.
@@ -1399,10 +1408,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .query(
                          FunctionScore(
-                             # elasticsearch_dsl v8.17 gives mypy error, phil reported as
-                             # https://github.com/elastic/elasticsearch-dsl-py/issues/1369
-                             # PLEASE REMOVE THIS COMMENT WHEN THE IGNORE BELOW BECOMES UNNECESSARY!
-                             functions=[ # type: ignore[arg-type]
+                             functions=[
                                  RandomScore(
                                      # needed for 100% reproducibility (ie; if paging results)
                                      # seed=int, field="fieldname"
@@ -1413,12 +1419,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                      .source(es_fields)\
                      .extra(size=page_size)
 
-        self._incr_query_op("random-sample")
-        hits = self._search_hits(search)
+        hits = self._search_hits(search, "random-sample")
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs: Any) -> list[Term]:
+                             **kwargs: Any) -> Terms:
         """
         uses generic Provider._sampled_title_words and Provider._sample_titles!
         """

@@ -19,7 +19,7 @@ class MissingRequiredValue(ProviderException):
 
 
 class QueryingEverythingUnsupportedQuery(ProviderException):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__("Can't query everything")
 
 
@@ -36,10 +36,10 @@ class BifurcatedProviderException(ProviderException):
         self.friendly = friendly
         self.detail = detail
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.friendly
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{type(self).__name__}({self.friendly!r},{self.detail!r})"
 
 class TemporaryProviderException(BifurcatedProviderException):
