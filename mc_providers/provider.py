@@ -150,8 +150,8 @@ def terms_from_counts(term_counts: collections.Counter[str],
     """
     format a Counter for return from library
     """
-    return [make_term(term, count, doc_counts[term], sample_size)
-            for term, count in term_counts.most_common(limit)]
+    return [make_term(term, term_count, doc_counts[term], sample_size)
+            for term, term_count in term_counts.most_common(limit)]
 
 class ContentProvider(ABC):
     """
