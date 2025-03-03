@@ -100,8 +100,8 @@ class _Term(TypedDict):
     use make_term, terms_from_counts to create
     """
     term: str
-    count: int                  # total number of appearances
-    ratio: float                # now rounded!
+    term_count: int                  # total number of appearances
+    term_ratio: float                # now rounded!
     doc_count: int              # number of documents appeared in
     doc_ratio: float            # rounded
     sample_size: int            # number of documents sampled
