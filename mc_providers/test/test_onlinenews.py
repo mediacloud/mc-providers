@@ -125,8 +125,8 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
                                        dt.datetime(2023, 12, 5))
         last_count = 99999999999
         for item in results:
-            assert last_count >= item['count']
-            last_count = item['count']
+            assert last_count >= item['term-count']
+            last_count = item['term-count']
 
     def test_top_sources(self):
         results = self._provider.sources("coronavirus", dt.datetime(2023, 11, 1),

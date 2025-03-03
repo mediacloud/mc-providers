@@ -138,7 +138,7 @@ def make_term(term: str, term_count: int, doc_count: int, sample_size: int) -> _
     the one place to format a dict for return from "words" method
     """
     return _Term(term=term, term_count=term_count,
-                 term_ratio=ratio_with_sigfigs(count, sample_size),
+                 term_ratio=ratio_with_sigfigs(term_count, sample_size),
                  doc_count=doc_count,
                  doc_ratio=ratio_with_sigfigs(doc_count, sample_size),
                  sample_size=sample_size)
