@@ -111,6 +111,7 @@ Terms: TypeAlias = list[_Term]
 class Trace:
     # less noisy things, with lower numbers
     STATS = 5
+    SUBINDICES = 8
     ARGS = 10            # constructor args
     RESULTS = 20
     QSTR = 50            # query string/args

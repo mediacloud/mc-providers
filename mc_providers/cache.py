@@ -27,8 +27,8 @@ class CachingManager():
         @param custom_prefix_for_key: if specified, will be used in place of function name for cache_key generation
         @param kwargs_to_ignore: if specified, list of kwargs not to include in generated key
         @param seconds: if specified, number of seconds to cache data
-            (CachingManager.cache_function MUST accept _cache_seconds
-            in kwargs, and MUST pop it before calling the decorated function)
+            (if present/set CachingManager.cache_function MUST accept
+            _cache_seconds in kwargs, and MUST pop it!)
         """
         def decorator(fn: Callable[Param, RetType]) -> Callable[Param, RetType]:
             # WISH: detect if 'fn' is being declared as a method to a ContentProvider!!
