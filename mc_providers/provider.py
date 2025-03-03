@@ -100,8 +100,8 @@ class _Term(TypedDict):
     use make_term, terms_from_counts to create
     """
     term: str
-    count: int                  # total number of appearances
-    ratio: float                # now rounded!
+    term_count: int                  # total number of appearances
+    term_ratio: float                # now rounded!
     doc_count: int              # number of documents appeared in
     doc_ratio: float            # rounded
     sample_size: int            # number of documents sampled
@@ -133,12 +133,12 @@ def ratio_with_sigfigs(count: int, sample_size: int) -> float:
     sf = max(sf, 3)
     return sigfig.round(count / sample_size, sigfigs=sf)
 
-def make_term(term: str, count: int, doc_count: int, sample_size: int) -> _Term:
+def make_term(term: str, term_count: int, doc_count: int, sample_size: int) -> _Term:
     """
     the one place to format a dict for return from "words" method
     """
-    return _Term(term=term, count=count,
-                 ratio=ratio_with_sigfigs(count, sample_size),
+    return _Term(term=term, term_count=term_count,
+                 term_ratio=ratio_with_sigfigs(term_count, sample_size),
                  doc_count=doc_count,
                  doc_ratio=ratio_with_sigfigs(doc_count, sample_size),
                  sample_size=sample_size)
@@ -150,8 +150,8 @@ def terms_from_counts(term_counts: collections.Counter[str],
     """
     format a Counter for return from library
     """
-    return [make_term(term, count, doc_counts[term], sample_size)
-            for term, count in term_counts.most_common(limit)]
+    return [make_term(term, term_count, doc_counts[term], sample_size)
+            for term, term_count in term_counts.most_common(limit)]
 
 class ContentProvider(ABC):
     """
