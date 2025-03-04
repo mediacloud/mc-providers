@@ -156,10 +156,10 @@ class OnlineNewsAbstractProvider(ContentProvider):
         results = dict(results_counter)
             
         # and clean up results to return
-        top_terms = [make_term(term=t.lower(), count=c, doc_count=0, sample_size=sample_size)
+        top_terms = [make_term(term=t.lower(), term_count=c, doc_count=0, sample_size=sample_size)
                      for t, c in results.items()
                      if t.lower() not in stopwords]
-        top_terms = sorted(top_terms, key=lambda x:x["count"], reverse=True)
+        top_terms = sorted(top_terms, key=lambda x:x["term_count"], reverse=True)
         return top_terms
 
     # Chunk'd
