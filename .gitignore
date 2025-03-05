@@ -6,3 +6,4 @@ dist/*
 build
 mc_providers.egg-info
 .env
+.pre-commit-run.sh.log
