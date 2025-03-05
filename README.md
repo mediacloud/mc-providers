@@ -17,6 +17,8 @@ Releases > 4.0.0 will all be shared exclusively on github, and this project will
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v4.0.0__ - Remove unused providers, update mediacloud provider to limit subindexes used in search, update some internal fields 
+
 * __v3.1.3__ - Accept "Seconds" argument to cache decorator. Update deployment action to track Minor releases 
 * __v3.1.2__ - Fix random sampling behavior in ES provider to be genuinely random, bugfix related to marginal sorting error, additional counters for fine-grained visibility 
 * __v3.1.1__ - Fix ES Provider to send None as last page pagination token
