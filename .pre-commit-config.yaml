@@ -15,6 +15,6 @@ repos:
         args: []
 
 # NOTE! omits deprecated providers AND nsa client library
-exclude: "/test/|twitter.py|reddit.py|youtube.py|mediacloud.py"
+exclude: "/test"
 
 

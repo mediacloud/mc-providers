@@ -15,7 +15,7 @@ from waybacknews.searchapi import SearchApiClient
 from .language import stopwords_for_language
 from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Terms, Trace, make_term, terms_from_counts
 from .cache import CachingManager
-from .mediacloud import MCSearchApiClient
+
 
 # don't need a logger per Provider instance
 logger = logging.getLogger(__name__)
@@ -462,10 +462,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         super().__init__(**kwargs)
 
     def get_client(self) -> Any:
-        api_client = MCSearchApiClient(collection=self._index, api_base_url=self._base_url)
-        if self._timeout:
-            api_client.TIMEOUT_SECS = self._timeout
-        return api_client
+        raise RuntimeError("OnlineNewsMediaCloudProvider is depricated")
 
     @classmethod
     def domain_search_string(cls) -> str:
