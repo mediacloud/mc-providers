@@ -462,7 +462,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         super().__init__(**kwargs)
 
     def get_client(self) -> Any:
-        raise RuntimeError("OnlineNewsMediaCloudProvider is depreciated")
+        raise RuntimeError("OnlineNewsMediaCloudProvider is depricated")
 
     @classmethod
     def domain_search_string(cls) -> str:
