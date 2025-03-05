@@ -33,8 +33,8 @@ class Overview(TypedDict):
 
 class OnlineNewsAbstractProvider(ContentProvider):
     """
-    All these endpoints accept a `domains: List[str]` search keyword arg.
-    and a `base_url: str` constructor keyword arg.
+    All these endpoints accept `domains: List[str]`
+    and `filter: List[str] search keyword args.
     """
 
     MAX_QUERY_LENGTH = pow(2, 14)
@@ -671,6 +671,7 @@ import base64
 import json
 import os
 import time
+from enum import Enum
 from typing import Callable, TypeAlias
 
 import elasticsearch
@@ -695,7 +696,8 @@ _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 
 # Was publication_date, but web-search always passes indexed_date.
 # identical indexed_date values (without fractional seconds?!)  have
-# been seen in the wild (entire day 2024-01-10).
+# been seen in the wild (entire day 2024-01-10).  NOTE! Mapping/index
+# indexed_data has only ms, but retrieved document text may have μs.
 _DEF_SORT_FIELD = "indexed_date"
 _DEF_SORT_ORDER = "desc"
 
@@ -750,46 +752,56 @@ def _format_match(hit: Hit, expanded: bool = False) -> dict:
         res["text_content"] = getattr(hit, "text_content", None)
     return res
 
+class Include(Enum):
+    DEFAULT = 0                 # include by default
+    EXPANDED = 1                # include if expanded=True
+    OPTIONAL = 2                # include if requested
+
 # Added for format_match_fields, which was added for random_sample
 # NOTE! full_language and original_url are NOT included,
 # since they're never returned in a "row".
 class _ES_Field:
     """ordinary field"""
-    METADATA = False
 
-    def __init__(self, field_name: str):
+    def __init__(self, field_name: str,
+                 *,
+                 metadata: bool = False,
+                 include: Include = Include.DEFAULT):
         self.es_field_name = field_name
+        self.metadata = metadata
+        self.include = include
 
     def get(self, hit: Hit) -> Any:
-        return getattr(hit, self.es_field_name)
+        if self.metadata:
+            # metadata field (incl 'id', 'index', 'score')
+            return getattr(hit.meta, self.es_field_name)
+        else:
+            return getattr(hit, self.es_field_name)
+
+    def convert(self, datum: Any) -> Any:
+        return datum
+
+    def get_convert(self, hit: Hit) -> Any:
+        return self.convert(self.get(hit))
 
 class _ES_DateTime(_ES_Field):
-    def get(self, hit: Hit) -> Any:
-        return ciso8601.parse_datetime(super().get(hit) + "Z")
+    def convert(self, datum: Any) -> Any:
+        return ciso8601.parse_datetime(datum + "Z")
 
 class _ES_Date(_ES_Field):
-    def get(self, hit: Hit) -> Any:
-        return dt.date.fromisoformat(super().get(hit)[:10])
-
-class _ES_MetaData(_ES_Field):
-    """
-    metadata field (incl 'id', 'index', 'score')
-    """
-    METADATA = True             # does not need to be requested
-
-    def get(self, hit: Hit) -> Any:
-        return getattr(hit.meta, self.es_field_name)
+    def convert(self, datum: Any) -> Any:
+        return dt.date.fromisoformat(datum[:10])
 
 # map external ("row") field name to _ES_Field instance
-# (with "get" method to fetch/parse field from Hit)
-_FIELDS: dict[str, _ES_Field] = {
-    "id": _ES_MetaData("id"),
+# (with "get" and "convert" methods to fetch/parse field from Hit)
+_ES_FIELDS: dict[str, _ES_Field] = {
+    "id": _ES_Field("id", metadata=True),
     "indexed_date": _ES_DateTime("indexed_date"),
     "language": _ES_Field("language"),
     "media_name": _ES_Field("canonical_domain"),
     "media_url": _ES_Field("canonical_domain"),
     "publish_date": _ES_Date("publication_date"),
-    "text": _ES_Field("text_content"),
+    "text": _ES_Field("text_content", include=Include.EXPANDED),
     "title": _ES_Field("article_title"),
     "url": _ES_Field("url"),
 }
@@ -912,21 +924,17 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def _fields(self, expanded: bool) -> ES_Fieldnames:
         """
-        from news-search-api/client.py QueryBuilder constructor:
-        return list of fields for item, paged_items, all_items to return
+        originally in news-search-api/client.py QueryBuilder constructor:
+        return list of ES fields for item, paged_items, all_items to return.
 
-        NOTE: In the case of "indexed_date" the mapped field is currently stored
-        with only millisecond resolution, while the stored string usually
-        has microsecond resolution.
+        Now using _ES_FIELDS
         """
         fields: ES_Fieldnames = [
-            "article_title", "publication_date", "indexed_date",
-            "language", "canonical_domain", "url",
-            # never returned to user: consider removing?
-            "full_language", "original_url"
+            f.es_field_name
+            for f in _ES_FIELDS.values()
+            if (f.include == Include.DEFAULT or
+                (expanded and f.include == Include.EXPANDED))
         ]
-        if expanded:
-            fields.append("text_content")
         return fields
 
     # Multipliers to allow weighting in order to (experimentally)
@@ -1289,7 +1297,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         Pass `None` as first `pagination_token`, after that pass
         value returned by previous call, until `None` returned.
 
-        `kwargs` may contain: `sort_field` (str), `sort_order` (str)
+        `kwargs` may contain: `sort_field` (str), `sort_order` (str), `expanded` (bool)
         """
         logger.debug("MCES._paged_items q: %s: %s e: %s ps: %d",
                      query, start_date, end_date, page_size)
@@ -1303,6 +1311,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         # NOTE! depends on client limiting to reasonable choices!!
         # (full text might leak data, or causes memory exhaustion!)
+        # originally took internal sort_field names only, now accept
+        # both, prefering to intrepret as external first
+        # (the default indexed_date name is same inside and out)
+        sf = _ES_FIELDS.get(sort_field)
+        if sf and not sf.metadata:
+            sort_field = sf.es_field_name
         if sort_field not in self._fields(expanded):
             raise ValueError(sort_field)
         if sort_order not in ["asc", "desc"]:
@@ -1315,7 +1329,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         ]
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
-                     .extra(size=page_size, track_total_hits=True)\
+                     .extra(size=page_size)\
                      .sort(*sort_opts)
 
         if pagination_token:
@@ -1367,17 +1381,24 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     @staticmethod
     def _hit_to_row(hit: Hit, fields: list[str]) -> dict[str, Any]:
         """
-        format a Hit returned by ES into an external "row".
-        fields is a list of external/row field names to be returned
-        (from _format_match (above) AND _matches to rows)
-        Omits fields not present in Hit
+        format a Hit returned by ES into an external "row" for random_sample.
+        fields is a list of external/row field names to be returned.
+
+        Duplicates _format_match (above) AND _matches_to_rows,
+        BUT could not immediately replace them because:
+
+        1. omits fields not present in Hit (instead of returning None)
+           (this could be remedied with an optional argument)
+
+        2. result is not cacheable (contains date/datetime datatypes)
+           (could now be split, using the separate get and convert methods)
         """
         # need to iterate over _external_ names rather than just returned
-        # fields to be able to return metadata fields
+        # fields to be able to return metadata fields.
         res = {}
         for field in fields:
             try:
-                res[field] = _FIELDS[field].get(hit)
+                res[field] = _ES_FIELDS[field].get_convert(hit)
             except AttributeError:
                 pass
         return res
@@ -1400,9 +1421,11 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             # about what they need!
             raise ValueError("ES.random_sample requires fields list")
 
-        # convert requested external field names to ES field names
+        # convert requested external field names to ES field names to request
         es_fields: ES_Fieldnames = [
-            _FIELDS[f].es_field_name for f in fields if not _FIELDS[f].METADATA
+            _ES_FIELDS[f].es_field_name
+            for f in fields
+            if not _ES_FIELDS[f].metadata
         ]
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
