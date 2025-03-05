@@ -285,6 +285,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         cls._prune_kwargs(kwcopy)
         if kwcopy:
             exstring = ", ".join(kwcopy) # join key names
+            # If here with "_seconds", client's cache_function needs updating!
             raise TypeError(f"unknown keyword args: {exstring}")
 
     @classmethod
@@ -866,6 +867,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
 
+    USE_SUBINDEX_LIST = 0   # default to searching all ILM sub-indices
+
     def __init__(self, **kwargs: Any):
         """
         Supported kwargs:
@@ -889,6 +892,9 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         self._last_elastic_ms = -1.0
 
         self._partial_responses = kwargs.pop("partial_responses", False) # TEMPORARY?
+
+        self._use_subindex_list = self._env_int(kwargs.pop("use_subindex_list", None),
+                                                "USE_SUBINDEX_LIST")
 
         # after pop-ing any local-only args:
         super().__init__(**kwargs)
@@ -1038,13 +1044,74 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # or len(results["hits"]) == 0
         return results["total"] == 0
 
-    def _index_from_dates(self, start_date: dt.datetime | None, end_date: dt.datetime | None) -> list[str]:
+    def _get_last_indexed(self, name: str) -> str:
+        """
+        Called from _get_subindices (caches results for all indices).
+        returns max indexed_date in a (sub)index.
+        only takes a few milliseconds.
+        """
+        AGG = "max_indexed_date"
+
+        search = Search(index=name, using=self._es).extra(size=0) # just aggs
+        search.aggs.bucket(AGG, 'max', field='indexed_date')
+
+        self._incr_query_op("get-last-indexed")
+        res = search.execute()
+        # XXX maybe call _check_response(res)??
+        t = res.aggregations[AGG].value_as_string
+        assert isinstance(t, str)
+        return t[:10]           # YYYY-MM-DD
+
+    @CachingManager.cache(seconds=15*60)
+    def _get_subindices(self, index: str) -> list[list[str]]:
+        """
+        index is a wildcard, passed as argument (instead of
+        picked up from self._index) so included in hash key
+        for paranoia in case index switched for testing!!!
+
+        returns ordered list of [last_indexed_date_str, subindex_name]
+        sorted in descending order
+        """
+        # "indices.get" returns lots of data, none of it useful
+        # (creation date could be when it was reindexed!)
+        res = self._es.indices.get_alias(index=index)
+
+        # plain list of lists, so JSONable.  date first for sorting below
+        subindices = [
+            [self._get_last_indexed(name), name]
+            for name in res.keys()
+        ]
+
+        # sort in descending order by date of last indexed story
+        # should be same as descending sort on name!!!
+        subindices.sort(reverse=True)
+        self.trace(Trace.SUBINDICES, "subindices %s", subindices)
+        return subindices
+
+    def _index_from_dates(self, start_date: dt.datetime, end_date: dt.datetime) -> list[str]:
         """
         return list of indices to search for a given date range.
         if indexing goes back to being split by publication_date (by year or quarter?)
         this could limit the number of shards that need to be queried
         """
-        return [self._index]
+        if self._use_subindex_list:
+            # expand by a month for: articles accepted in advance,
+            # date truncation in subindices list, subindex overlap
+            start_pub_datetime = start_date - dt.timedelta(days=31)
+            start_pub_date_str = start_pub_datetime.date().isoformat()
+
+            try:
+                ret: list[str] = []
+                for last_indexed, name in self._get_subindices(self._index):
+                    # quit as soon as next oldest index can't contain anything
+                    if start_pub_date_str > last_indexed:
+                        break
+                    ret.append(name)
+                self.trace(Trace.SUBINDICES, "subindex_list %s %r", start_pub_date_str, ret)
+                return ret
+            except (elasticsearch.exceptions.TransportError, elasticsearch.exceptions.ApiError):
+                pass
+        return [self._index]    # return list with wildcard
 
     def _search(self, search: Search, op: str) -> Response:
         """
