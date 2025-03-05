@@ -12,7 +12,7 @@ import pytest
 
 from mc_providers.onlinenews import OnlineNewsWaybackMachineProvider
 from mc_providers import (provider_for, PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD,
-                          PLATFORM_SOURCE_MEDIA_CLOUD_OLD, PLATFORM_SOURCE_WAYBACK_MACHINE)
+                        PLATFORM_SOURCE_WAYBACK_MACHINE)
 
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
 
@@ -491,81 +491,3 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         self._test_random_sample(["id", "indexed_date", "language",
                                   "media_name", "media_url", "publish_date",
                                   "text", "title", "url"], page_size=2)
-
-@pytest.mark.skipif(IN_GITHUB_CI_WORKFLOW, reason="requires VPN tunnel to Media Cloud News Search API server")
-class OnlineNewsMediaCloudOldProviderTest(OnlineNewsWaybackMachineProviderTest):
-
-    def setUp(self):
-        # this requires having a VPN tunnel open to the Media Cloud production
-        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_OLD, 
-                                        base_url="http://localhost:8000/v1/", api_key="", index_prefix="mc_search")
-
-    def test_expanded_story_list(self):
-        query = "*"
-        start_date = dt.datetime(2020, 1, 1)
-        end_date = dt.datetime(2023, 12, 1)
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, expanded=True, chunk=False)
-        assert len(page1) > 0
-        for story in page1:
-            assert "id" in story
-            assert "text" in story
-            assert len(story['text']) > 0
-
-    def test_date_formats(self):
-        query = "biden"
-        start_date = dt.datetime(2023, 11, 25)
-        end_date = dt.datetime(2023, 11, 26)
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, chunk=False)
-        for story in page1:
-            assert "publish_date" in story
-            assert story['publish_date'] is not None
-            assert isinstance(story['publish_date'], dt.date)
-            assert "indexed_date" in story
-            assert story['indexed_date'] is not None
-            assert isinstance(story['indexed_date'], dt.datetime)
-
-    def test_paged_items(self):
-        query = "biden"
-        start_date = dt.datetime(2020, 1, 1)
-        end_date = dt.datetime(2023, 12, 1)
-        story_count = self._provider.count(query, start_date, end_date, chunk=False)
-        # make sure test case is reasonable size (ie. more than one page, but not too many pages
-        assert story_count > 1000
-        # fetch first page
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, chunk=False)
-        assert len(page1) > 0
-        assert next_token1 is not None
-        page1_url1 = page1[0]['url']
-        # grab token, fetch next page
-        page2, next_token2 = self._provider.paged_items(query, start_date, end_date, chunk=False,
-                                                        pagination_token=next_token1)
-        assert len(page2) > 0
-        assert next_token2 is not None
-        assert next_token1 != next_token2  # verify paging token changed
-        page2_urls = [s['url'] for s in page2]
-        assert page1_url1 not in page2_urls  # verify pages don't overlap
-
-    def _test_domain_filters(self, domains: List[str]):
-        query = "biden"
-        start_date = dt.datetime(2023, 11, 1)
-        end_date = dt.datetime(2023, 12, 1)
-        page1, _ = self._provider.paged_items(query, start_date, end_date, domains=domains, chunk=False)
-        assert len(page1) > 0
-        for story in page1:
-            assert "url" in story
-            assert story['media_name'] in domains
-            assert story['media_url'] in domains
-
-    def test_domain_filter(self):
-        self._test_domain_filters(["cnn.com"])
-        self._test_domain_filters(["cnn.com", "foxnews.com"])
-
-    def test_item(self):
-        STORY_ID = "180ddf49e3da7eea5812a35ab06a4f1656e5483649b9a8805bdcfaf4e8284b41"  # a 2024-03-09 story
-        story = self._provider.item(STORY_ID)
-        assert len(story['title']) > 0
-        assert story['language'] == 'en'
-        assert story['media_name'] == 'cnn.com'
-
-    # THIS IS (almost certainly) NOT THE CLASS YOU'RE LOOKING FOR
-    # (tests for Old Provider)

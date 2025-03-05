@@ -15,7 +15,6 @@ PLATFORM_ONLINE_NEWS = 'onlinenews'
 
 PLATFORM_SOURCE_WAYBACK_MACHINE = 'waybackmachine'
 PLATFORM_SOURCE_MEDIA_CLOUD = "mediacloud"     # direct to elasticsearch
-PLATFORM_SOURCE_MEDIA_CLOUD_OLD = "mediacloud-old" # news-search-api based
 
 NAME_SEPARATOR = "-"
 
@@ -27,7 +26,6 @@ def provider_name(platform: str, source: str) -> str:
 # this map could ve constructed from just a list of classes.
 _PROVIDER_MAP: dict[str, type[ContentProvider]] = {
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): OnlineNewsWaybackMachineProvider,
-    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD_OLD): OnlineNewsMediaCloudProvider,
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): OnlineNewsMediaCloudESProvider,
 }
 
