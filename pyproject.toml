@@ -4,7 +4,7 @@ build-backend = "flit_core.buildapi"
 
 [project]
 name = "mc-providers"
-version = "4.0.0b"
+version = "4.0.0"
 authors = [
     {name = "Paige Gulley", email = "nano3.14@gmail.com"},
     {name = "Rahul Bhargava", email = "r.bhargava@northeastern.edu"},
