@@ -412,7 +412,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs: Any) -> Terms:
-        raise PermanentProviderException("Term Queries against the WaybackMachine are not supported at this time")
+        raise PermanentProviderException("Top Words results are not supported for Wayback Machine queries at this time")
 
 ################
 # helpers for formatting url_search_strings (only enabled for MC)
