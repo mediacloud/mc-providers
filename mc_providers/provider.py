@@ -222,7 +222,7 @@ class ContentProvider(ABC):
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
 
-    # historically not a random semaple, see random_sample below!
+    # historically not a random sample, see random_sample below!
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs: Any) -> list[dict]:
         raise NotImplementedError("Doesn't support sample content.")
@@ -261,8 +261,17 @@ class ContentProvider(ABC):
 
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                       page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
-        # NOTE! could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
+        # NOTE! EXACTLY the same type signature as all_items!!
+        # Could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
+        # A paged_ version would be needed for to expose a web-search API call
+        # (which would require a "seed" value to generate a consistent sequence)
         raise NotImplementedError("Doesn't support fetching random sample.")
+
+    def fields(self, expanded: bool = False) -> Iterable[str]:
+        """
+        helper for random_sample; return list of "normal" fields
+        """
+        raise NotImplementedError("Doesn't support field nemaes.")
 
     def normalized_count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                                    **kwargs: Any) -> NormalizedCountOverTime:

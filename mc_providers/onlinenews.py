@@ -723,8 +723,12 @@ class SanitizedQueryString(QueryString):
     query string (expression) with quoting
     """
     def __init__(self, query: str, **kwargs: Any):
-        # XXX always pass allow_leading_wildcard=False
-        # (take as an argument, defaulting to False)??
+        # Default allow_leading_wildcard to False.  Leading wildcards
+        # kill the ES server; It's _possible_ using "wildcard" mapping
+        # for url will make them usable for url_search_strings, so
+        # allow override;
+        if "allow_leading_wildcard" not in kwargs:
+            kwargs["allow_leading_wildcard"] = False
 
         # quote slashes to avoid interpretation as /regexp/
         # (which not only appear in URLs but are expensive as well)
@@ -933,7 +937,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         originally in news-search-api/client.py QueryBuilder constructor:
         return list of ES fields for item, paged_items, all_items to return.
 
-        Now using _ES_FIELDS
+        Now using _ES_FIELDS; see also fields method (returns external names)
         """
         fields: ES_Fieldnames = [
             f.es_field_name
@@ -1511,6 +1515,18 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
         hits = self._search_hits(search, "random-sample")
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
+
+    def fields(self, expanded: bool = False) -> Iterable[str]:
+        """
+        returns external field names (helper for random_sample).
+        see also _fields (returns internal names)
+        """
+        return [
+            ext_name
+            for ext_name, f in _ES_FIELDS.items()
+            if (f.include == Include.DEFAULT or
+                (expanded and f.include == Include.EXPANDED))
+        ]
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
                              **kwargs: Any) -> Terms:
