@@ -39,8 +39,7 @@ def _cache_handler(fn, cache_prefix, *args, **kwargs) -> tuple:
 class CacheMediaCloudTest(unittest.TestCase):
 
     def setUp(self) -> None:
-        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD, None,
-                                      "http://localhost:8010/v1/")
+        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD)
         CachingManager.cache_function = _cache_handler
 
     def _reset_cache(self):
