@@ -119,15 +119,6 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
             found_story_count += len(page)
         assert found_story_count == story_count
 
-    @pytest.mark.filterwarnings("ignore:.*significant figures.*:UserWarning")
-    def test_words(self):
-        results = self._provider.words("coronavirus", dt.datetime(2023, 12, 1),
-                                       dt.datetime(2023, 12, 5))
-        last_count = 99999999999
-        for item in results:
-            assert last_count >= item['term_count']
-            last_count = item['term_count']
-
     def test_top_sources(self):
         results = self._provider.sources("coronavirus", dt.datetime(2023, 11, 1),
                                          dt.datetime(2023, 12, 1))
@@ -323,6 +314,24 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         # a VPN tunnel open to the Media Cloud production ES
         # with "export ONLINE_NEWS_MEDIA_CLOUD_ES_PROVIDER_BASE_URL=http://localhost:9200"
         self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD)
+
+    # moved here 2025-03-18: no longer supported in Wayback Provider
+    @pytest.mark.filterwarnings("ignore:.*significant figures.*:UserWarning")
+    def test_words(self):
+        results = self._provider.words("coronavirus", dt.datetime(2023, 12, 1),
+                                       dt.datetime(2023, 12, 5))
+        last_term_count = 99999999999
+        sample_size = 0
+        for item in results:
+            assert last_term_count >= item['term_count']
+            last_term_count = item['term_count']
+            assert item['term_count'] >= item['doc_count']
+            assert item['term_ratio'] >= item['doc_ratio']
+            if sample_size == 0:
+                sample_size = item['sample_size']
+                assert isinstance(sample_size, int)
+            else:
+                assert item['sample_size'] == sample_size
 
     def test_expanded_story_list(self):
         query = "*"
