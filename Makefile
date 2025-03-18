@@ -23,7 +23,7 @@ lint:	$(VENVDONE)
 # --editable skips installing project sources in venv
 # pre-commit is in dev optional-requirements
 install $(VENVDONE): $(VENVDIR) Makefile pyproject.toml
-	$(VENVBIN)/python3 -m pip install --editable '.[dev]'
+	$(VENVBIN)/python3 -m pip install --editable '.[dev,test]'
 	$(VENVBIN)/pre-commit install
 	touch $(VENVDONE)
 
@@ -34,8 +34,11 @@ $(VENVDIR):
 update:	$(VENVDONE)
 	$(VENVBIN)/pre-commit autoupdate
 
-# remove explicit test list when old providers gone?
 test:	$(VENVDONE)
+	@test -n "$$MEDIA_CLOUD_API_KEY" || (echo "need MEDIA_CLOUD_API_KEY" 1>&2 && exit 1)
+	$(VENVBIN)/pytest
+
+test-mc-news:	$(VENVDONE)
 	@test -n "$$MEDIA_CLOUD_API_KEY" || (echo "need MEDIA_CLOUD_API_KEY" 1>&2 && exit 1)
 	$(VENVBIN)/pytest mc_providers/test/test_onlinenews.py::OnlineNewsMediaCloudProviderTest
 

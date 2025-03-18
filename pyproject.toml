@@ -42,6 +42,9 @@ dependencies = [
 # additional packages for mypy belong in pre-commit secion below
 dev = [
     "pre-commit",
+]
+test = [
+    "psutil", # for tests
     "python-dotenv",
     "pytest"
 ]
