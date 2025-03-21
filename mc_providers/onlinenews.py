@@ -1329,7 +1329,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 break
 
     @classmethod
-    def _hit_to_row(cls, hit: Hit, fields: list[str]) -> dict[str, Any]:
+    def _hit_to_row(cls, hit: Hit, fields: list[str], return_none: bool = False) -> dict[str, Any]:
         """
         format a Hit returned by ES into an external "row" for random_sample.
         fields is a list of external/row field names to be returned.
@@ -1343,23 +1343,24 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         2. result is not cacheable (contains date/datetime datatypes)
            (could now be split, using the separate get and convert methods)
         """
-        # need to iterate over _external_ names rather than just returned
+        # iterates over _external_ names rather than just returned
         # fields to be able to return metadata fields.
-        res = {}
+        res: dict[str, Any] = {}
         for field in fields:
             try:
                 res[field] = cls._ES_FIELDS[field].get_convert(hit)
             except AttributeError:
-                pass
+                if return_none:
+                    res[field] = None
         return res
 
-    # max controlled by index-level index.max_result_window, default is 10K.
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                       page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
         """
-        Returns generator to allow pagination, but actual pagination may
-        require more work (passing "seed" and "field" argument to
-        RandomSample).  Maybe foist issue on caller and require "seed"?
+        Returns generator to allow pagination, but currently returns only
+        single page; actual pagination may require more work (passing
+        "seed" and "field" arguments to RandomSample).  Maybe foist
+        issue on caller and require "seed" argument??
 
         To implement pagination in web-search API, would need to have
         a method here that takes and returns a pagination token that
@@ -1371,11 +1372,17 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # about what they need!
             raise ValueError("ES.random_sample requires fields list")
 
+        # max controlled by index-level index.max_result_window, default is 10K.
+        # allows 5K samples for lang/title pairs (for top words):
+        max_page = 10000 // len(fields)
+        if page_size > max_page:
+            page_size = max_page
+
         # convert requested external field names to ES field names to request
         es_fields: ES_Fieldnames = [
             self._ES_FIELDS[f].es_field_name
             for f in fields
-            if not self._ES_FIELDS[f].metadata
+            if not self._ES_FIELDS[f].metadata # no need to ask for metadata
         ]
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
