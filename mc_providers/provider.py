@@ -279,7 +279,8 @@ class ContentProvider(ABC):
         # (which would require a "seed" value to generate a consistent sequence)
         raise NotImplementedError("Doesn't support fetching random sample.")
 
-    def fields(self, expanded: bool = False) -> list[str]:
+    @classmethod
+    def fields(cls, expanded: bool = False) -> list[str]:
         """
         helper for random_sample; return list of "normal" fields
         """

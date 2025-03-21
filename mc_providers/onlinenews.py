@@ -526,20 +526,6 @@ class _ES_Date(_ES_Field):
     def convert(self, datum: Any) -> Any:
         return dt.date.fromisoformat(datum[:10])
 
-# map external ("row") field name to _ES_Field instance
-# (with "get" and "convert" methods to fetch/parse field from Hit)
-_ES_FIELDS: dict[str, _ES_Field] = {
-    "id": _ES_Field("id", metadata=True),
-    "indexed_date": _ES_DateTime("indexed_date"),
-    "language": _ES_Field("language"),
-    "media_name": _ES_Field("canonical_domain"),
-    "media_url": _ES_Field("canonical_domain"),
-    "publish_date": _ES_Date("publication_date"),
-    "text": _ES_Field("text_content", include=Include.EXPANDED),
-    "title": _ES_Field("article_title"),
-    "url": _ES_Field("url"),
-}
-
 def _format_day_counts(bucket: list) -> Counts:
     """
     from news-search-api/client.py EsClientWrapper.format_count
@@ -602,6 +588,20 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     USE_SUBINDEX_LIST = 0   # default to searching all ILM sub-indices
     INDEX_PREFIX = "mc_search"
+
+    # map external ("row") field name to _ES_Field instance
+    # (with "get" and "convert" methods to fetch/parse field from Hit)
+    _ES_FIELDS: dict[str, _ES_Field] = {
+        "id": _ES_Field("id", metadata=True),
+        "indexed_date": _ES_DateTime("indexed_date"),
+        "language": _ES_Field("language"),
+        "media_name": _ES_Field("canonical_domain"),
+        "media_url": _ES_Field("canonical_domain"),
+        "publish_date": _ES_Date("publication_date"),
+        "text": _ES_Field("text_content", include=Include.EXPANDED),
+        "title": _ES_Field("article_title"),
+        "url": _ES_Field("url"),
+    }
 
     def __init__(self, **kwargs: Any):
         """
@@ -829,7 +829,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         fields: ES_Fieldnames = [
             f.es_field_name
-            for f in _ES_FIELDS.values()
+            for f in self._ES_FIELDS.values()
             if (f.include == Include.DEFAULT or
                 (expanded and f.include == Include.EXPANDED))
         ]
@@ -1264,7 +1264,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # originally took internal sort_field names only, now accept
         # both, prefering to intrepret as external first
         # (the default indexed_date name is same inside and out)
-        sf = _ES_FIELDS.get(sort_field)
+        sf = self._ES_FIELDS.get(sort_field)
         if sf and not sf.metadata:
             sort_field = sf.es_field_name
         if sort_field not in self._fields(expanded):
@@ -1328,8 +1328,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             if not next_page_token:
                 break
 
-    @staticmethod
-    def _hit_to_row(hit: Hit, fields: list[str]) -> dict[str, Any]:
+    @classmethod
+    def _hit_to_row(cls, hit: Hit, fields: list[str]) -> dict[str, Any]:
         """
         format a Hit returned by ES into an external "row" for random_sample.
         fields is a list of external/row field names to be returned.
@@ -1348,7 +1348,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         res = {}
         for field in fields:
             try:
-                res[field] = _ES_FIELDS[field].get_convert(hit)
+                res[field] = cls._ES_FIELDS[field].get_convert(hit)
             except AttributeError:
                 pass
         return res
@@ -1373,9 +1373,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         # convert requested external field names to ES field names to request
         es_fields: ES_Fieldnames = [
-            _ES_FIELDS[f].es_field_name
+            self._ES_FIELDS[f].es_field_name
             for f in fields
-            if not _ES_FIELDS[f].metadata
+            if not self._ES_FIELDS[f].metadata
         ]
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
@@ -1395,14 +1395,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         hits = self._search_hits(search, "random-sample")
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
-    def fields(self, expanded: bool = False) -> list[str]:
+    @classmethod
+    def fields(cls, expanded: bool = False) -> list[str]:
         """
         returns external field names (helper for random_sample).
         see also _fields (returns internal names)
         """
         return [
             ext_name
-            for ext_name, f in _ES_FIELDS.items()
+            for ext_name, f in cls._ES_FIELDS.items()
             if (f.include == Include.DEFAULT or
                 (expanded and f.include == Include.EXPANDED))
         ]
