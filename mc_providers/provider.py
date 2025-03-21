@@ -149,7 +149,7 @@ def terms_from_counts(term_counts: collections.Counter[str],
                       sample_size: int,
                       limit: int) -> Terms:
     """
-    format a Counter for return from library
+    format term and doc counts for return
     """
     return [make_term(term, term_count, doc_counts[term], sample_size)
             for term, term_count in term_counts.most_common(limit)]
@@ -222,23 +222,35 @@ class ContentProvider(ABC):
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
 
-    # historically not a random sample, see random_sample below!
+    def _collect_random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                               samples: int, fields: list[str], **kwargs: Any) -> list[dict]:
+        """
+        collect `samples` random items with `fields` using random_sample.
+        MAYBE enforce max samples based on number of fields 10000//len(fields)?
+        """
+        results: list[dict] = []
+        limit = samples
+        for page in self.random_sample(query, start_date, end_date, limit, fields, **kwargs):
+            results.extend(page)
+            limit = samples - len(results)
+            if limit <= 0:
+                break
+        return results
+
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
                **kwargs: Any) -> list[dict]:
-        raise NotImplementedError("Doesn't support sample content.")
-
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        raise NotImplementedError("Doesn't support total count.")
+        """
+        return a small sample with all "normal" fields
+        MAYBE enforce a limit on limit??
+        """
+        return self._collect_random_sample(query, start_date, end_date, samples=limit,
+                                           fields=self.fields(), **kwargs)
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         raise NotImplementedError("Doesn't support counts over time.")
 
     def item(self, item_id: str) -> Item:
         raise NotImplementedError("Doesn't support fetching individual content.")
-
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> Terms:
-        raise NotImplementedError("Doesn't support top words.")
 
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> list[Language]:
         raise NotImplementedError("Doesn't support top languages.")
@@ -261,13 +273,13 @@ class ContentProvider(ABC):
 
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                       page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
-        # NOTE! EXACTLY the same type signature as all_items!!
+        # NOTE! same type signature as all_items (plus fields)
         # Could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
         # A paged_ version would be needed for to expose a web-search API call
         # (which would require a "seed" value to generate a consistent sequence)
         raise NotImplementedError("Doesn't support fetching random sample.")
 
-    def fields(self, expanded: bool = False) -> Iterable[str]:
+    def fields(self, expanded: bool = False) -> list[str]:
         """
         helper for random_sample; return list of "normal" fields
         """
@@ -337,51 +349,35 @@ class ContentProvider(ABC):
                    for w, c in counts.most_common(limit)]
         return results
 
-    def _sample_titles(self, query: str, start_date: dt.datetime, end_date: dt.datetime, sample_size: int,
-                             **kwargs: Any) -> Iterable[list[dict[str,str]]]:
+    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+              **kwargs: Any) -> Terms:
         """
-        default helper for _sampled_title_words: return a sampling of stories for top words
+        generic version of "top words"
         """
-        return self.random_sample(query, start_date, end_date, sample_size,
-                                  fields=["title", "language"], **kwargs)
-
-    # use this if you need to sample some content for top words
-    def _sampled_title_words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs: Any) -> Terms:
         # support sample_size kwarg
         sample_size = kwargs.pop('sample_size', self.WORDS_SAMPLE)
 
-        # grab a sample and collect by like language as we page through it
+        # collect titles by language
         # (spacy tokenizer has high startup cost)
         titles: dict[str, list[str]] = collections.defaultdict(list)
-        sampled_count = 0
         title_count = 0
-        for page in self._sample_titles(query, start_date, end_date, sample_size, **kwargs):
-            sampled_count += len(page)
-            for story in page:
-                if "title" in story:
-                    titles[story.get("language", 'UNK')].append(story["title"])
-                    title_count += 1
+        for story in self._collect_random_sample(query, start_date, end_date, samples=sample_size,
+                                                 fields=["title", "language"], **kwargs):
+            if "title" in story:
+                titles[story.get("language", 'UNK')].append(story["title"])
+                title_count += 1
 
-            needed = sample_size - sampled_count
-            if needed <= 0:
-                break           # quit once sample_size filled
-            if needed < sample_size:
-                sample_size = needed # don't overfill
-
-        # now tokenize, removing stopwords and tally
+        # now tokenize by language, removing stopwords and tally by term & document
         term_counts: collections.Counter = collections.Counter() # total appearances of a term
         doc_counts: collections.Counter = collections.Counter()  # number of documents with a term
 
-        # spacy init is expensive, so call with bunches of titles
-        # in groups by language, for stopword processing
         for language, title_list in titles.items():
-            for word_list in terms_without_stopwords_list(language, title_list): # takes min_length
-                this_doc_counts = collections.Counter(word_list)
+            for doc_word_list in terms_without_stopwords_list(language, title_list): # takes min_length
+                this_doc_counts = collections.Counter(doc_word_list)
                 term_counts.update(this_doc_counts)
-                doc_counts.update(this_doc_counts.keys())
+                doc_counts.update(this_doc_counts.keys()) # count once per document
 
-        # format results (used to use sampled_count)
+        # format results
         results = terms_from_counts(term_counts, doc_counts, title_count, limit)
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results

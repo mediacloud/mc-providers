@@ -1,5 +1,5 @@
 """
-tests for OnlineNewsMediaCloudESProvider._check_response
+tests for OnlineNewsMediaCloudProvider._check_response
 which interprets elasticsearch_dsl Response objects
 
 [Phil: If you know me, I almost NEVER write static tests (IMO the
@@ -18,13 +18,13 @@ import logging
 from elasticsearch_dsl.response import Response
 
 from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, ProviderException, TemporaryProviderException
-from mc_providers.onlinenews import OnlineNewsMediaCloudESProvider
+from mc_providers.onlinenews import OnlineNewsMediaCloudProvider
 
 def check(p, d):
     r = Response(None, d)
     p._check_response(r)
 
-provider = OnlineNewsMediaCloudESProvider()
+provider = OnlineNewsMediaCloudProvider()
 
 def test_parse_error(caplog):
     try:
@@ -162,69 +162,5 @@ def test_timed_out(caplog):
     except TemporaryProviderException as e:
         assert str(e) == "Timed out"
         assert len(caplog.records) == 0
-        return
-    assert False
-
-
-################ partial responses
-
-pprovider = OnlineNewsMediaCloudESProvider(partial_responses=True)
-
-def test_partial(caplog):
-    caplog.set_level(logging.INFO)
-    check(pprovider, {
-        "took": 65,
-        "timed_out": False,
-        "_shards": {
-            "total": 150,
-            "successful": 17,
-            "skipped": 0,
-            "failed": 133,
-            "failures": [
-                {
-                    "shard": 10,
-                    "index": "mc_search-000005",
-                    "node": "x_Eedt9kR2Wqzd0IbQmmfg",
-                    "reason": {
-                        "type": "circuit_breaking_exception",
-                        "reason": "some reason",
-                    }
-                }
-            ]
-        }
-    })
-    assert caplog.record_tuples == [
-        ("mc_providers.onlinenews", logging.INFO, "MC._search 133/150 shards failed; reasons: Counter({'circuit_breaking_exception': 1})"),
-        ("mc_providers.onlinenews", logging.INFO, "returning partial results")
-    ]
-
-def test_partial_all_skipped(caplog):
-    caplog.set_level(logging.INFO)
-    try:
-        check(pprovider, {
-            "took": 65,
-            "timed_out": False,
-            "_shards": {
-                "total": 150,
-                "successful": 17,
-                "skipped": 17,
-                "failed": 133,
-                "failures": [
-                    {
-                        "reason": {
-                            "type": "some_exception",
-                            "reason": "some reason",
-                        }
-                    }
-                ]
-            }
-        })
-    except MysteryProviderException as e:
-        assert str(e) == "some_exception"
-        assert len(caplog.records) == 2
-        assert caplog.records[0].levelno == logging.INFO
-        assert caplog.records[0].message == "MC._search 133/150 shards failed; reasons: Counter({'some_exception': 1})"
-        assert caplog.records[1].levelno == logging.ERROR
-        assert caplog.records[1].message.startswith("Unknown response error")
         return
     assert False

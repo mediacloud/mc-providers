@@ -42,12 +42,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
     # default values for constructor arguments
     API_KEY = ""                # not required
 
-    def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)
-        self._client = self.get_client()
-
-    def get_client(self) -> Any:
-        raise NotImplementedError("Abstract provider class should not be implemented directly")
+    # no class-specific __init__
 
     @classmethod
     def domain_search_string(cls) -> str:
@@ -55,150 +50,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     def everything_query(self) -> str:
         return '*'
-
-    # Chunk'd
-    # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
-               **kwargs: Any) -> Items:
-        results = []
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("sample")
-            this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
-            results.extend(this_results)
-        
-        if len(results) > limit:
-            results = random.sample(results, limit)
-            
-        return self._matches_to_rows(results)
-
-    # Chunk'd
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        count = 0
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("count")
-            count += self._client.count(subquery, start_date, end_date, **kwargs)
-        return count
-
-    # Chunk'd
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
-        counter: Counter = Counter()
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("count-over-time")
-            results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
-            countable = {i['date']: i['count'] for i in results}
-            counter += Counter(countable)
-        
-        counter_dict = dict(counter)
-        results = [Date(date=date, timestamp=date.timestamp(), count=count) for date, count in counter_dict.items()]
-        # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
-        results.sort(key=lambda x: x["timestamp"])
-        return CountOverTime(counts=results)
-
-    
-    @CachingManager.cache()
-    def item(self, item_id: str) -> Item:
-        self._incr_query_op("item")
-        one_item = self._client.article(item_id)
-        return self._match_to_row(one_item)
-
-    
-    # Chunk'd
-    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
-            self._incr_query_op("all-items")
-            for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
-                yield self._matches_to_rows(page)
-
-    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any)\
-            -> tuple[List[Dict], Optional[str]] :
-        """
-        Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
-        This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
-        the right page of results.
-        """
-        updated_kwargs = {**kwargs, 'chunk': False}
-        query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
-        self._incr_query_op("paged-items")
-        page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
-        return self._matches_to_rows(page), pagination_token
-
-    # Chunk'd
-    @CachingManager.cache()
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-              **kwargs: Any) -> Terms:
-        chunked_queries = self._assemble_and_chunk_query_str(query, **kwargs)
-
-        # first figure out the dominant languages, so we can remove appropriate stopwords.
-        # This method does chunking for you, so just pass the query 
-        top_languages = self.languages(query, start_date, end_date, limit=100, **kwargs) 
-
-        represented_languages = [i['language'] for i in top_languages if i['ratio'] > 0.1]
-        stopwords = set()
-        for lang in represented_languages:
-            try:
-                stopwords.update(stopwords_for_language(lang))
-            except RuntimeError:
-                pass  # not stopwords for language, just let them all pass through
-            
-        # for now just return top terms in article titles
-        sample_size = 5000
-        
-        # An accumulator for the subqueries
-        results_counter: Counter = Counter({})
-        for subquery in chunked_queries:
-            self._incr_query_op("words")
-            this_results = self._client.terms(subquery, start_date, end_date,
-                                     self._client.TERM_FIELD_TITLE, self._client.TERM_AGGREGATION_TOP)
-            
-            if "detail" not in this_results:
-                results_counter += Counter(this_results)
-        
-        results = dict(results_counter)
-            
-        # and clean up results to return
-        top_terms = [make_term(term=t.lower(), term_count=c, doc_count=0, sample_size=sample_size)
-                     for t, c in results.items()
-                     if t.lower() not in stopwords]
-        top_terms = sorted(top_terms, key=lambda x:x["term_count"], reverse=True)
-        return top_terms
-
-    # Chunk'd
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs: Any) -> List[Language]:
-        
-        matching_count = self.count(query, start_date, end_date, **kwargs)
-
-        results_counter: Counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("languages")
-            this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
-            countable = {item["name"]: item["value"] for item in this_languages}
-            results_counter += Counter(countable)
-
-        # if client returns aggregated count of languages across all documents,
-        # no rounding should be applied (exact counts)
-        top_languages = [Language(language=name, value=value,
-                                  ratio=value/matching_count, sample_size=matching_count)
-                         for name, value in results_counter.items()]
-        
-        # Sort by count
-        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
-        return top_languages[:limit]
-
-    # Chunk'd
-    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs: Any) -> List[Source]:
-        
-        results_counter: Counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("sources")
-            results = self._client.top_sources(subquery, start_date, end_date)
-            countable = {source['name']: source['value'] for source in results}
-            results_counter += Counter(countable)
-        
-        cleaned_sources = [Source(source=source, count=count) for source, count in results_counter.items()]
-        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
-        return cleaned_sources
 
     @classmethod
     def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
@@ -365,7 +216,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
 
     def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
-        return "OnlineNewsAbstractProvider"
+        return type(self).__name__
 
 
 class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
@@ -376,17 +227,117 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     STAT_NAME = "wbm"
 
     def __init__(self, **kwargs: Any):
-        super().__init__(**kwargs)  # will call get_client
-
-    def get_client(self) -> Any:
-        client = SearchApiClient("mediacloud", self._base_url)
+        super().__init__(**kwargs)
+        # NOTE! typing _client as Any to avoid type checking client calls
+        self._client: Any = SearchApiClient("mediacloud", self._base_url)
         if self._timeout:
-            client.TIMEOUT_SECS = self._timeout
-        return client
+            self._client.TIMEOUT_SECS = self._timeout
 
     @classmethod
     def domain_search_string(cls) -> str:
         return "domain"
+
+    # Chunk'd
+    # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
+    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
+               **kwargs: Any) -> Items:
+        results = []
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("sample")
+            this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
+            results.extend(this_results)
+
+        if len(results) > limit:
+            results = random.sample(results, limit)
+
+        return self._matches_to_rows(results)
+
+    # Chunk'd
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
+        count = 0
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("count")
+            count += self._client.count(subquery, start_date, end_date, **kwargs)
+        return count
+
+    # Chunk'd
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
+        counter: Counter = Counter()
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("count-over-time")
+            results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
+            countable = {i['date']: i['count'] for i in results}
+            counter += Counter(countable)
+
+        counter_dict = dict(counter)
+        results = [Date(date=date, timestamp=date.timestamp(), count=count) for date, count in counter_dict.items()]
+        # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
+        results.sort(key=lambda x: x["timestamp"])
+        return CountOverTime(counts=results)
+
+    @CachingManager.cache()
+    def item(self, item_id: str) -> Item:
+        self._incr_query_op("item")
+        one_item = self._client.article(item_id)
+        return self._match_to_row(one_item)
+
+    # Chunk'd
+    def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
+        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+            self._incr_query_op("all-items")
+            for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
+                yield self._matches_to_rows(page)
+
+    def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any)\
+            -> tuple[List[Dict], Optional[str]] :
+        """
+        Note - this is not chunk'd so you can't run giant queries page by page... use `all_items` instead.
+        This kwargs should include `pagination_token`, which will get relayed in to the api client and fetch
+        the right page of results.
+        """
+        updated_kwargs = {**kwargs, 'chunk': False}
+        query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
+        self._incr_query_op("paged-items")
+        page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
+        return self._matches_to_rows(page), pagination_token
+
+    # Chunk'd
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
+                  **kwargs: Any) -> List[Language]:
+
+        matching_count = self.count(query, start_date, end_date, **kwargs)
+
+        results_counter: Counter = Counter({})
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("languages")
+            this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
+            countable = {item["name"]: item["value"] for item in this_languages}
+            results_counter += Counter(countable)
+
+        # if client returns aggregated count of languages across all documents,
+        # no rounding should be applied (exact counts)
+        top_languages = [Language(language=name, value=value,
+                                  ratio=value/matching_count, sample_size=matching_count)
+                         for name, value in results_counter.items()]
+
+        # Sort by count
+        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
+        return top_languages[:limit]
+
+    # Chunk'd
+    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+                **kwargs: Any) -> List[Source]:
+
+        results_counter: Counter = Counter({})
+        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+            self._incr_query_op("sources")
+            results = self._client.top_sources(subquery, start_date, end_date)
+            countable = {source['name']: source['value'] for source in results}
+            results_counter += Counter(countable)
+
+        cleaned_sources = [Source(source=source, count=count) for source, count in results_counter.items()]
+        cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
+        return cleaned_sources
 
     @classmethod
     def _matches_to_rows(cls, matches: List) -> Items:
@@ -405,10 +356,6 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
             'archived_url': match['archive_playback_url'],
             'article_url': match['article_url'],
         }
-
-    def __repr__(self) -> str:
-        # important to keep this unique among platforms so that the caching works right
-        return "OnlineNewsWaybackMachineProvider"
 
     def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
               **kwargs: Any) -> Terms:
@@ -448,224 +395,8 @@ def match_formatted_search_strings(fuss: list[str]) -> str:
     urls_str = " OR ".join(fuss)
     return f"url:({urls_str})"
 
-
-class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
-    """
-    Provider interface to access new mediacloud-news-search archive. 
-    All these endpoints accept a `domains: List[str]` keyword arg.
-    """
-    BASE_URL = "http://ramos.angwin:8000/v1/"
-    INDEX_PREFIX = "mc_search"
-    STAT_NAME = "nsa"
-
-    def __init__(self, **kwargs: Any):
-        # maybe take comma separated list?
-        # read JSON data with latest date present in each ILM index???
-        self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
-        super().__init__(**kwargs)
-
-    def get_client(self) -> Any:
-        raise RuntimeError("OnlineNewsMediaCloudProvider is depricated")
-
-    @classmethod
-    def domain_search_string(cls) -> str:
-        return "canonical_domain"
-
-    @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
-        return [cls._match_to_row(m) for m in matches]
-
-    @staticmethod
-    def _match_to_row(match: Dict) -> Dict:
-        story_info = {
-            'id': match['id'],
-            'media_name': match['canonical_domain'],
-            'media_url': match['canonical_domain'],
-            'title': match['article_title'],
-            'publish_date': dt.date.fromisoformat(match['publication_date']),
-            'url': match['url'],
-            'language': match['language'],
-            'indexed_date': ciso8601.parse_datetime(match['indexed_date']+"Z"),
-        }
-        if 'text_content' in match:
-            story_info['text'] = match['text_content']
-        return story_info
-
-    def __repr__(self) -> str:
-        return "OnlineNewsMediaCloudProvider"
-
-    def _is_no_results(self, results: Overview) -> bool:
-        """
-        used to test _overview_query results
-        """
-        return self._client._is_no_results(results) # type: ignore[no-any-return]
-
-    @classmethod
-    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
-        """
-        take domains, filters, url_search_strings as kwargs
-        return a list of query_strings to be OR'ed together
-        (to be AND'ed with user query or used as a filter)
-        """
-        cls.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
-        selector_clauses = super()._selector_query_clauses(kwargs)
-
-        # Here to try to get web-search out of query
-        # formatting biz.  Accepts a Mapping indexed by
-        # domain_string, of lists (or sets!) of search_strings.
-        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
-        if url_search_strings:
-            # Unclear if domain field check actually helps at all,
-            # so make it optional for testing.
-            if kwargs.get("url_search_string_domain", True): # TEMP: include canonincal_domain:
-                domain_field = cls.domain_search_string()
-
-                # here with mapping of cdom => iterable[search_string]
-                for cdom, search_strings in url_search_strings.items():
-                    fuss: List[str] = [] # formatted url_search_strings
-                    for sstr in search_strings:
-                        format_and_append_uss(sstr, fuss)
-
-                    mfuss = match_formatted_search_strings(fuss)
-                    selector_clauses.append(
-                        f"({domain_field}:{cdom} AND {mfuss})")
-
-                    format_and_append_uss(cdom, fuss)
-            else: # make query without domain (name) field check
-                # collect all the URL search strings
-                fuss = []
-                for cdom, search_strings in url_search_strings.items():
-                    for sstr in search_strings:
-                        format_and_append_uss(sstr, fuss)
-
-                # check all the urls in one swell foop!
-                selector_clauses.append(
-                        match_formatted_search_strings(fuss))
-
-        cls.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
-        return selector_clauses
-
-    @classmethod
-    def _selector_count(cls, kwargs: dict) -> int:
-        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
-        count = super()._selector_count(kwargs)
-        if url_search_strings:
-            count += sum(map(len, url_search_strings.values()))
-        return count
-
-    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        logger.debug("MC.count %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MC.count kwargs %r", kwargs)
-        # no chunking on MC
-        results = self._overview_query(query, start_date, end_date, **kwargs)
-        return self._count_from_overview(results)
-
-    def _count_from_overview(self, results: Overview) -> int:
-        """
-        used in .count() and .languages()
-        """
-        if self._is_no_results(results):
-            logger.debug("MC._count_from_overview: no results")
-            return 0
-        count = results['total']
-        logger.debug("MC._count_from_overview: %s", count)
-        return count
-
-    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
-        logger.debug("MC.count_over_time %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MC.count_over_time kwargs %r", kwargs)
-
-        results = self._overview_query(query, start_date, end_date, **kwargs)
-        to_return: List[Date] = []
-        if not self._is_no_results(results):
-            data = results['dailycounts']
-            # transform to list of dicts for easier use: process in sorted order
-            for day_date in sorted(data):  # date is in 'YYYY-MM-DD' format
-                dt = ciso8601.parse_datetime(day_date) # PB: is datetime!!
-                to_return.append(Date(
-                    date=dt.date(), # PB: was returning datetime!
-                    timestamp=int(dt.timestamp()), # PB: conversion may be to local time!!
-                    count=data[day_date]
-                ))
-        logger.debug("MC.count_over_time %d items", len(to_return))
-        self.trace(Trace.RESULTS, "MC.count_over_time %r", to_return)
-        return CountOverTime(counts=to_return)
-
-    # NB: limit argument ignored, but included to keep mypy quiet
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20, **kwargs: Any) -> List[Dict]:
-        logger.debug("MC.sample %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MC.sample kwargs %r", kwargs)
-
-        results = self._overview_query(query, start_date, end_date, **kwargs)
-        if self._is_no_results(results):
-            rows = []
-        else:
-            rows = self._matches_to_rows(results['matches'])
-        logger.debug("MC.sample: %d rows", len(rows))
-        self.trace(Trace.RESULTS, "MC.sample %r", rows)
-        return rows             # could slice w/ [:limit]!
-
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
-                  **kwargs: Any) -> List[Language]:
-        logger.debug("MC.languages %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MC.languages kwargs %r", kwargs)
-        kwargs.pop("sample_size", None)
-        results = self._overview_query(query, start_date, end_date, **kwargs)
-        if self._is_no_results(results):
-            return []
-        matches = self._count_from_overview(results)
-        # NOTE! value and matches are exact (population counts, not based on sampling)
-        # so they are "exact", and no rounding applied to ratio!
-        top_languages = [Language(language=name, value=value, ratio=value/matches,
-                                  sample_size=matches)
-                         for name, value in results['toplangs'].items()]
-        logger.debug("MC.languages: _overview returned %d items", len(top_languages))
-
-        # Sort by count
-        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
-        items = top_languages[:limit]
-
-        logger.debug("MC.languages: returning %d items", len(items))
-        self.trace(Trace.RESULTS, "MC.languages %r", items)
-        return items
-
-    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                **kwargs: Any) -> List[Source]:
-        logger.debug("MC.sources %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MC.sources kwargs %r", kwargs)
-        results = self._overview_query(query, start_date, end_date, **kwargs)
-        items: list[Source]
-        if self._is_no_results(results):
-            items = []
-        else:
-            cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
-            items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
-        logger.debug("MC.sources: %d items", len(items))
-        self.trace(Trace.RESULTS, "MC.sources %r", items)
-        return items
-
-    @CachingManager.cache('overview')
-    def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
-        logger.debug("MC._overview %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MC._overview kwargs %r", kwargs)
-
-        # no chunking on MC
-        q = self._assembled_query_str(query, **kwargs)
-        self._prune_kwargs(kwargs)
-        self._incr_query_op("overview")
-        return self._client._overview_query(q, start_date, end_date, **kwargs) # type: ignore[no-any-return]
-
-    @classmethod
-    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
-        """
-        Called by OnlineNewsAbstractProvider.all_items, .words;
-        ignores chunking!
-        """
-        cls.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
-        return [cls._assembled_query_str(base_query, **kwargs)]
-
 ################################################################
-# here with original code dragged up from mediacloud.py and news-search-api/api.py
+# here with code dragged up from mediacloud.py and news-search-api/api.py
 
 # imports here in case split out into its own file
 import base64
@@ -673,7 +404,7 @@ import json
 import os
 import time
 from enum import Enum
-from typing import Callable, TypeAlias
+from typing import TypeAlias
 
 import elasticsearch
 import mcmetadata.urls as urls
@@ -844,7 +575,7 @@ def _b64_decode_page_token(strng: str) -> str:
 # string to lower likelihood of appearing (default keys are numeric).
 _SORT_KEY_SEP = "\x01"
 
-class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
+class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     version of MC Provider going direct to ES.
 
@@ -872,13 +603,12 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
 
     USE_SUBINDEX_LIST = 0   # default to searching all ILM sub-indices
+    INDEX_PREFIX = "mc_search"
 
     def __init__(self, **kwargs: Any):
         """
         Supported kwargs:
 
-        "partial_responses": bool (TEMPORARY?)
-            if True, return response data, even if incomplete
         "profile": bool or str
             if True, request profiling data, and log total ES CPU usage
             CAN pass string (filename) here, but feeding all the
@@ -895,7 +625,8 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         # total seconds from the last profiled query:
         self._last_elastic_ms = -1.0
 
-        self._partial_responses = kwargs.pop("partial_responses", False) # TEMPORARY?
+        # maybe take comma separated list?
+        self._index = self._env_str(kwargs.pop("index_prefix", None), "INDEX_PREFIX") + "-*"
 
         self._use_subindex_list = self._env_int(kwargs.pop("use_subindex_list", None),
                                                 "USE_SUBINDEX_LIST")
@@ -926,11 +657,170 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                                                randomize_nodes_in_pool=True)
 
 
-    def get_client(self) -> Any:
+    @classmethod
+    def domain_search_string(cls) -> str:
+        return "canonical_domain"
+
+    @classmethod
+    def _matches_to_rows(cls, matches: List) -> List:
+        return [cls._match_to_row(m) for m in matches]
+
+    @staticmethod
+    def _match_to_row(match: Dict) -> Dict:
+        story_info = {
+            'id': match['id'],
+            'media_name': match['canonical_domain'],
+            'media_url': match['canonical_domain'],
+            'title': match['article_title'],
+            'publish_date': dt.date.fromisoformat(match['publication_date']),
+            'url': match['url'],
+            'language': match['language'],
+            'indexed_date': ciso8601.parse_datetime(match['indexed_date']+"Z"),
+        }
+        if 'text_content' in match:
+            story_info['text'] = match['text_content']
+        return story_info
+
+    @classmethod
+    def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
         """
-        called from OnlineNewsAbstractProvider constructor to set _client
+        take domains, filters, url_search_strings as kwargs
+        return a list of query_strings to be OR'ed together
+        (to be AND'ed with user query or used as a filter)
         """
-        return None
+        cls.trace(Trace.QSTR, "ES._selector_query_clauses IN: %r", kwargs)
+        selector_clauses = super()._selector_query_clauses(kwargs)
+
+        # Here to try to get web-search out of query
+        # formatting biz.  Accepts a Mapping indexed by
+        # domain_string, of lists (or sets!) of search_strings.
+        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
+        if url_search_strings:
+            # Unclear if domain field check actually helps at all,
+            # so make it optional for testing.
+            if kwargs.get("url_search_string_domain", True): # TEMP: include canonincal_domain:
+                domain_field = cls.domain_search_string()
+
+                # here with mapping of cdom => iterable[search_string]
+                for cdom, search_strings in url_search_strings.items():
+                    fuss: List[str] = [] # formatted url_search_strings
+                    for sstr in search_strings:
+                        format_and_append_uss(sstr, fuss)
+
+                    mfuss = match_formatted_search_strings(fuss)
+                    selector_clauses.append(
+                        f"({domain_field}:{cdom} AND {mfuss})")
+
+                    format_and_append_uss(cdom, fuss)
+            else: # make query without domain (name) field check
+                # collect all the URL search strings
+                fuss = []
+                for cdom, search_strings in url_search_strings.items():
+                    for sstr in search_strings:
+                        format_and_append_uss(sstr, fuss)
+
+                # check all the urls in one swell foop!
+                selector_clauses.append(
+                        match_formatted_search_strings(fuss))
+
+        cls.trace(Trace.QSTR, "ES._selector_query_clauses OUT: %s", selector_clauses)
+        return selector_clauses
+
+    @classmethod
+    def _selector_count(cls, kwargs: dict) -> int:
+        url_search_strings: UrlSearchStrings = kwargs.get('url_search_strings', {})
+        count = super()._selector_count(kwargs)
+        if url_search_strings:
+            count += sum(map(len, url_search_strings.values()))
+        return count
+
+    def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
+        logger.debug("ES.count %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "ES.count kwargs %r", kwargs)
+        # no chunking on MC
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        return self._count_from_overview(results)
+
+    def _count_from_overview(self, results: Overview) -> int:
+        """
+        used in .count() and .languages()
+        """
+        if self._is_no_results(results):
+            logger.debug("ES._count_from_overview: no results")
+            return 0
+        count = results['total']
+        logger.debug("ES._count_from_overview: %s", count)
+        return count
+
+    def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
+        logger.debug("ES.count_over_time %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "ES.count_over_time kwargs %r", kwargs)
+
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        to_return: List[Date] = []
+        if not self._is_no_results(results):
+            data = results['dailycounts']
+            # transform to list of dicts for easier use: process in sorted order
+            for day_date in sorted(data):  # date is in 'YYYY-MM-DD' format
+                dt = ciso8601.parse_datetime(day_date) # PB: is datetime!!
+                to_return.append(Date(
+                    date=dt.date(), # PB: was returning datetime!
+                    timestamp=int(dt.timestamp()), # PB: conversion may be to local time!!
+                    count=data[day_date]
+                ))
+        logger.debug("ES.count_over_time %d items", len(to_return))
+        self.trace(Trace.RESULTS, "ES.count_over_time %r", to_return)
+        return CountOverTime(counts=to_return)
+
+    # using default sample & words methods (using random_sample)
+
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
+                  **kwargs: Any) -> List[Language]:
+        logger.debug("ES.languages %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "ES.languages kwargs %r", kwargs)
+        kwargs.pop("sample_size", None)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        if self._is_no_results(results):
+            return []
+        matches = self._count_from_overview(results)
+        # NOTE! value and matches are exact (population counts, not based on sampling)
+        # so they are "exact", and no rounding applied to ratio!
+        top_languages = [Language(language=name, value=value, ratio=value/matches,
+                                  sample_size=matches)
+                         for name, value in results['toplangs'].items()]
+        logger.debug("ES.languages: _overview returned %d items", len(top_languages))
+
+        # Sort by count
+        top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
+        items = top_languages[:limit]
+
+        logger.debug("ES.languages: returning %d items", len(items))
+        self.trace(Trace.RESULTS, "ES.languages %r", items)
+        return items
+
+    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+                **kwargs: Any) -> List[Source]:
+        logger.debug("ES.sources %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "ES.sources kwargs %r", kwargs)
+        results = self._overview_query(query, start_date, end_date, **kwargs)
+        items: list[Source]
+        if self._is_no_results(results):
+            items = []
+        else:
+            cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
+            items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
+        logger.debug("ES.sources: %d items", len(items))
+        self.trace(Trace.RESULTS, "ES.sources %r", items)
+        return items
+
+    @classmethod
+    def _assemble_and_chunk_query_str(cls, base_query: str, chunk: bool = True, **kwargs: Any) -> list[str]:
+        """
+        Called by OnlineNewsAbstractProvider.all_items, .words;
+        ignores chunking!
+        """
+        cls.trace(Trace.QSTR, "ES._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        return [cls._assembled_query_str(base_query, **kwargs)]
 
     def _fields(self, expanded: bool) -> ES_Fieldnames:
         """
@@ -1037,9 +927,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             return s.source(self._fields(expanded))
         else:
             return s.source(False) # no source fields in hits
-
-    def __repr__(self) -> str:
-        return "OnlineNewsMediaCloudESProvider"
 
     def _is_no_results(self, results: Overview) -> bool:
         """
@@ -1162,7 +1049,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 raise TemporaryProviderException(short, long) from e
             raise PermanentProviderException(short, long) from e
 
-        logger.debug("MC._search ES took %s ms", getattr(res, "took", -1))
+        logger.debug("ES._search ES took %s ms", getattr(res, "took", -1))
 
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
@@ -1213,9 +1100,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
 
     def _check_response(self, res: Response) -> None:
         """
-        This worker method only needed to implement "partial_responses"
-        hack, an emergency ripcord in case the now visible circuit
-        breaker errors so often that it's deemed necessary to ignore them!
+        check for failure; try to throw a helpful exception
 
         NOTE!!! Because this code is complex and brittle, and the
         actual errors don't grow on trees, this method has a test
@@ -1272,7 +1157,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 raise self._parse_exception(parse_error)
 
             # after parse error
-            logger.info("MC._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
+            logger.info("ES._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
 
             # have seen
             # type == "circuit_breaking_exception",
@@ -1284,10 +1169,6 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
                 raise PermanentProviderException(pser.type, pser.reason)
 
             if "circuit_breaking_exception" in reasons:
-                # NOTE! checking late so that above logging occurs
-                if self._partial_responses:
-                    logger.info("returning partial results")
-                    return
                 raise TemporaryProviderException("Out of memory")
 
             logger.error("Unknown response error %r", res.to_dict())
@@ -1516,7 +1397,7 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
         hits = self._search_hits(search, "random-sample")
         yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
 
-    def fields(self, expanded: bool = False) -> Iterable[str]:
+    def fields(self, expanded: bool = False) -> list[str]:
         """
         returns external field names (helper for random_sample).
         see also _fields (returns internal names)
@@ -1527,10 +1408,3 @@ class OnlineNewsMediaCloudESProvider(OnlineNewsMediaCloudProvider):
             if (f.include == Include.DEFAULT or
                 (expanded and f.include == Include.EXPANDED))
         ]
-
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
-                             **kwargs: Any) -> Terms:
-        """
-        uses generic Provider._sampled_title_words and Provider._sample_titles!
-        """
-        return self._sampled_title_words(query, start_date, end_date, limit=limit, **kwargs)

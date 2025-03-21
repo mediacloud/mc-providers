@@ -313,7 +313,8 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         # run inside angwin cluster *OR*
         # a VPN tunnel open to the Media Cloud production ES
         # with "export ONLINE_NEWS_MEDIA_CLOUD_ES_PROVIDER_BASE_URL=http://localhost:9200"
-        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD)
+        self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD,
+                                      software_id=__name__, session_id=os.environ.get("USER", "test-user"))
 
     # moved here 2025-03-18: no longer supported in Wayback Provider
     @pytest.mark.filterwarnings("ignore:.*significant figures.*:UserWarning")
