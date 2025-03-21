@@ -39,9 +39,9 @@ test-all:	$(VENVDONE)
 	@test -n "$$MEDIA_CLOUD_API_KEY" || (echo "need MEDIA_CLOUD_API_KEY" 1>&2 && exit 1)
 	$(VENVBIN)/pytest
 
-test-mc-news:	$(VENVDONE)
+test-mc:	$(VENVDONE)
 	@test -n "$$MEDIA_CLOUD_API_KEY" || (echo "need MEDIA_CLOUD_API_KEY" 1>&2 && exit 1)
-	$(VENVBIN)/pytest mc_providers/test/test_onlinenews.py::OnlineNewsMediaCloudProviderTest
+	$(VENVBIN)/pytest -v mc_providers/test/test_onlinenews.py::OnlineNewsMediaCloudProviderTest
 
 ## clean up development environment
 clean:
