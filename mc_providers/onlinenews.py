@@ -29,7 +29,6 @@ class Overview(TypedDict):
     topdomains: Counts          # from _format_counts
     toplangs: Counts            # from _format_counts
     dailycounts: Counts         # from _format_day_counts
-    matches: list[Dict]         # from _format_match
 
 class OnlineNewsAbstractProvider(ContentProvider):
     """
@@ -1207,7 +1206,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                            calendar_interval="day", min_doc_count=1)
         search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
-        search = search.extra(track_total_hits=True)
+        search = search.extra(track_total_hits=True, size=0)
         res = self._search(search, "overview") # run search, need .aggregations & .hits
 
         hits = res.hits            # property
@@ -1219,8 +1218,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             total=hits.total.value, # type: ignore[attr-defined]
             topdomains=_format_counts(aggs[AGG_DOMAIN]["buckets"]),
             toplangs=_format_counts(aggs[AGG_LANG]["buckets"]),
-            dailycounts=_format_day_counts(aggs[AGG_DAILY]["buckets"]),
-            matches=[_format_match(h) for h in hits], # _match_to_row called in .sample()
+            dailycounts=_format_day_counts(aggs[AGG_DAILY]["buckets"])
         )
 
     @CachingManager.cache()
