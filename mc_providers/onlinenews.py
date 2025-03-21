@@ -912,7 +912,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # could include languages (etc) here
         ]
 
-        # try applying more selective queries (fewer results) first
         # key function avoids attempts to compare Query objects when tied!
         filters.sort(key=lambda ft : ft.weighted)
         for ft in filters:
@@ -1192,8 +1191,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         from news-search-api/api.py
         """
 
-        logger.debug("MCES._overview %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "MCES._overview kwargs %r", kwargs)
+        logger.debug("MC._overview %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC._overview kwargs %r", kwargs)
 
         # these are arbitrary, but match news-search-api/client.py
         # so that es-tools/mc-es-top.py can recognize this is an overview query:
@@ -1247,9 +1246,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         `kwargs` may contain: `sort_field` (str), `sort_order` (str), `expanded` (bool)
         """
-        logger.debug("MCES._paged_items q: %s: %s e: %s ps: %d",
+        logger.debug("MC._paged_items q: %s: %s e: %s ps: %d",
                      query, start_date, end_date, page_size)
-        self.trace(Trace.QSTR, "MCES._paged_items kw: %r", kwargs)
+        self.trace(Trace.QSTR, "MC._paged_items kw: %r", kwargs)
 
         page_size = min(page_size, _ES_MAXPAGE)
         expanded = kwargs.pop("expanded", False)
@@ -1301,7 +1300,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         # double conversion!
         rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
-        self.trace(Trace.RESULTS, "MCES next %s rows %r", new_pt, rows)
+        self.trace(Trace.RESULTS, "MC next %s rows %r", new_pt, rows)
         return (rows, new_pt)
 
     def all_items(self, query: str,
@@ -1366,9 +1365,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         when passed a "randomize" argument???
         """
         if not fields:
-            # _COULD_ default to everything, but make user think
-            # about what they need!
-            raise ValueError("ES.random_sample requires fields list")
+            raise ValueError("random_sample requires fields list")
 
         # max controlled by index-level index.max_result_window, default is 10K.
         # allows 5K samples for lang/title pairs (for top words):
