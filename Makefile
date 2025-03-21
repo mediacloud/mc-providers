@@ -35,7 +35,7 @@ $(VENVDIR):
 update:	$(VENVDONE)
 	$(VENVBIN)/pre-commit autoupdate
 
-test:	$(VENVDONE)
+test-all:	$(VENVDONE)
 	@test -n "$$MEDIA_CLOUD_API_KEY" || (echo "need MEDIA_CLOUD_API_KEY" 1>&2 && exit 1)
 	$(VENVBIN)/pytest
 
