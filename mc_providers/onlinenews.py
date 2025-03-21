@@ -478,9 +478,7 @@ def _format_match(hit: Hit, expanded: bool = False) -> dict:
         "publication_date": getattr(hit, "publication_date", "")[:10] or None,
         "indexed_date": getattr(hit, "indexed_date", None),
         "language": getattr(hit, "language", None),
-        "full_langauge": getattr(hit, "full_language", None), # never returned!
         "url": getattr(hit, "url", None),
-        "original_url": getattr(hit, "original_url", None), # never returned!
         "canonical_domain": getattr(hit, "canonical_domain", None),
         "id": hit.meta.id        # PB: was re-hash of url!
     }
