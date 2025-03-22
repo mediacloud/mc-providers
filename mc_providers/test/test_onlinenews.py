@@ -464,9 +464,20 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
             results.extend(page)
         return results
 
+    # id requires special handling; test for no duplicates
+    def test_random_id(self):
+        page_size = 10000
+        results = self._collect_random_results("*", ["id"], page_size, None, None)
+        assert len(results) == page_size
+
+        # ensure no duplicates
+        idlist = [s["id"] for s in results]
+        idset = set(idlist)
+        assert len(idlist) == len(idset)
+
     def _test_random_sample(self, fields, page_size, start=None, end=None):
-        # check page_size filled
         results = self._collect_random_results("biden", fields, page_size, start, end)
+        # check page_size filled
         assert len(results) == page_size
 
         fset = set(fields)
@@ -492,10 +503,6 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     def test_random_sample_lang(self):
         self._test_random_sample(["language"], 1000)
-
-    def test_random_sample_id(self):
-        # id requires special handling
-        self._test_random_sample(["id"], 10000)
 
     def test_random_sample_all(self):
         self._test_random_sample(["id", "indexed_date", "language",

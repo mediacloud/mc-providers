@@ -13,7 +13,12 @@ import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
 from .language import stopwords_for_language
-from .provider import AllItems, ContentProvider, CountOverTime, Date, Item, Items, Language, Source, Terms, Trace, make_term, terms_from_counts
+from .provider import (
+    AllItems, ContentProvider, CountOverTime, Date,
+    Item, Items, Language, Source, Terms, Trace,
+    make_term, terms_from_counts,
+    LANGUAGES_LIMIT, SAMPLE_LIMIT, SOURCES_LIMIT, WORDS_LIMIT
+)
 from .cache import CachingManager
 
 
@@ -230,7 +235,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
 
     # Chunk'd
     # NB: it looks like the limit keyword here doesn't ever get passed into the query - something's missing here.
-    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 20,
+    def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SAMPLE_LIMIT,
                **kwargs: Any) -> Items:
         results = []
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
@@ -293,7 +298,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return self._matches_to_rows(page), pagination_token
 
     # Chunk'd
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = LANGUAGES_LIMIT,
                   **kwargs: Any) -> List[Language]:
 
         matching_count = self.count(query, start_date, end_date, **kwargs)
@@ -316,7 +321,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         return top_languages[:limit]
 
     # Chunk'd
-    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SOURCES_LIMIT,
                 **kwargs: Any) -> List[Source]:
 
         results_counter: Counter = Counter({})
@@ -348,7 +353,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
             'article_url': match['article_url'],
         }
 
-    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+    def words(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = WORDS_LIMIT,
               **kwargs: Any) -> Terms:
         raise PermanentProviderException("Top Words results are not supported for Wayback Machine queries at this time")
 
@@ -638,7 +643,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return a list of query_strings to be OR'ed together
         (to be AND'ed with user query or used as a filter)
         """
-        cls.trace(Trace.QSTR, "ES._selector_query_clauses IN: %r", kwargs)
+        cls.trace(Trace.QSTR, "MC._selector_query_clauses IN: %r", kwargs)
         selector_clauses = super()._selector_query_clauses(kwargs)
 
         # Here to try to get web-search out of query
@@ -673,7 +678,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 selector_clauses.append(
                         match_formatted_search_strings(fuss))
 
-        cls.trace(Trace.QSTR, "ES._selector_query_clauses OUT: %s", selector_clauses)
+        cls.trace(Trace.QSTR, "MC._selector_query_clauses OUT: %s", selector_clauses)
         return selector_clauses
 
     @classmethod
@@ -685,8 +690,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         return count
 
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
-        logger.debug("ES.count %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "ES.count kwargs %r", kwargs)
+        logger.debug("MC.count %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.count kwargs %r", kwargs)
         # no chunking on MC
         results = self._overview_query(query, start_date, end_date, **kwargs)
         return self._count_from_overview(results)
@@ -696,15 +701,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         used in .count() and .languages()
         """
         if self._is_no_results(results):
-            logger.debug("ES._count_from_overview: no results")
+            logger.debug("MC._count_from_overview: no results")
             return 0
         count = results['total']
-        logger.debug("ES._count_from_overview: %s", count)
+        logger.debug("MC._count_from_overview: %s", count)
         return count
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
-        logger.debug("ES.count_over_time %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "ES.count_over_time kwargs %r", kwargs)
+        logger.debug("MC.count_over_time %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.count_over_time kwargs %r", kwargs)
 
         results = self._overview_query(query, start_date, end_date, **kwargs)
         to_return: List[Date] = []
@@ -718,16 +723,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                     timestamp=int(dt.timestamp()), # PB: conversion may be to local time!!
                     count=data[day_date]
                 ))
-        logger.debug("ES.count_over_time %d items", len(to_return))
-        self.trace(Trace.RESULTS, "ES.count_over_time %r", to_return)
+        logger.debug("MC.count_over_time %d items", len(to_return))
+        self.trace(Trace.RESULTS, "MC.count_over_time %r", to_return)
         return CountOverTime(counts=to_return)
 
     # using default sample & words methods (using random_sample)
 
-    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 10,
+    def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = LANGUAGES_LIMIT,
                   **kwargs: Any) -> List[Language]:
-        logger.debug("ES.languages %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "ES.languages kwargs %r", kwargs)
+        logger.debug("MC.languages %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.languages kwargs %r", kwargs)
         kwargs.pop("sample_size", None)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         if self._is_no_results(results):
@@ -738,20 +743,20 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         top_languages = [Language(language=name, value=value, ratio=value/matches,
                                   sample_size=matches)
                          for name, value in results['toplangs'].items()]
-        logger.debug("ES.languages: _overview returned %d items", len(top_languages))
+        logger.debug("MC.languages: _overview returned %d items", len(top_languages))
 
         # Sort by count
         top_languages = sorted(top_languages, key=lambda x: x['value'], reverse=True)
         items = top_languages[:limit]
 
-        logger.debug("ES.languages: returning %d items", len(items))
-        self.trace(Trace.RESULTS, "ES.languages %r", items)
+        logger.debug("MC.languages: returning %d items", len(items))
+        self.trace(Trace.RESULTS, "MC.languages %r", items)
         return items
 
-    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = 100,
+    def sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SOURCES_LIMIT,
                 **kwargs: Any) -> List[Source]:
-        logger.debug("ES.sources %s %s %s", query, start_date, end_date)
-        self.trace(Trace.QSTR, "ES.sources kwargs %r", kwargs)
+        logger.debug("MC.sources %s %s %s", query, start_date, end_date)
+        self.trace(Trace.QSTR, "MC.sources kwargs %r", kwargs)
         results = self._overview_query(query, start_date, end_date, **kwargs)
         items: list[Source]
         if self._is_no_results(results):
@@ -759,8 +764,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         else:
             cleaned_sources = [Source(source=source, count=count) for source, count in results['topdomains'].items()]
             items = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
-        logger.debug("ES.sources: %d items", len(items))
-        self.trace(Trace.RESULTS, "ES.sources %r", items)
+        logger.debug("MC.sources: %d items", len(items))
+        self.trace(Trace.RESULTS, "MC.sources %r", items)
         return items
 
     @classmethod
@@ -769,7 +774,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         Called by OnlineNewsAbstractProvider.all_items, .words;
         ignores chunking!
         """
-        cls.trace(Trace.QSTR, "ES._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
+        cls.trace(Trace.QSTR, "MC._assemble_and_chunk_query_str %s %s %r", base_query, chunk, kwargs)
         return [cls._assembled_query_str(base_query, **kwargs)]
 
     def _fields(self, expanded: bool) -> ES_Fieldnames:
@@ -998,7 +1003,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 raise TemporaryProviderException(short, long) from e
             raise PermanentProviderException(short, long) from e
 
-        logger.debug("ES._search ES took %s ms", getattr(res, "took", -1))
+        logger.debug("MC._search ES took %s ms", getattr(res, "took", -1))
 
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
@@ -1106,7 +1111,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 raise self._parse_exception(parse_error)
 
             # after parse error
-            logger.info("ES._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
+            logger.info("MC._search %d/%d shards failed; reasons: %r", shards.failed, shards.total, reasons)
 
             # have seen
             # type == "circuit_breaking_exception",
