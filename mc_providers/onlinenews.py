@@ -205,14 +205,6 @@ class OnlineNewsAbstractProvider(ContentProvider):
         cls.trace(Trace.QSTR, "_assembled_query_str OUT: %s", q)
         return q
 
-    @classmethod
-    def _matches_to_rows(cls, matches: List) -> Items:
-        raise NotImplementedError()
-
-    @classmethod
-    def _match_to_row(cls, match: Dict) -> Item:
-        raise NotImplementedError()
-
     def __repr__(self) -> str:
         # important to keep this unique among platforms so that the caching works right
         return type(self).__name__
@@ -466,25 +458,6 @@ class SanitizedQueryString(QueryString):
         sanitized = query.replace("/", r"\/")
         super().__init__(query=sanitized, **kwargs)
 
-def _format_match(hit: Hit, expanded: bool = False) -> dict:
-    """
-    from news-search-api/client.py EsClientWrapper.format_match;
-    Unparsed (JSON safe), so can be returned by overview for caching.
-    Result passed to _match_to_row called for any data returned to user.
-    """
-    res = {
-        "article_title": getattr(hit, "article_title", None),
-        "publication_date": getattr(hit, "publication_date", "")[:10] or None,
-        "indexed_date": getattr(hit, "indexed_date", None),
-        "language": getattr(hit, "language", None),
-        "url": getattr(hit, "url", None),
-        "canonical_domain": getattr(hit, "canonical_domain", None),
-        "id": hit.meta.id        # PB: was re-hash of url!
-    }
-    if expanded:
-        res["text_content"] = getattr(hit, "text_content", None)
-    return res
-
 class Include(Enum):
     DEFAULT = 0                 # include by default
     EXPANDED = 1                # include if expanded=True
@@ -657,26 +630,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     @classmethod
     def domain_search_string(cls) -> str:
         return "canonical_domain"
-
-    @classmethod
-    def _matches_to_rows(cls, matches: List) -> List:
-        return [cls._match_to_row(m) for m in matches]
-
-    @staticmethod
-    def _match_to_row(match: Dict) -> Dict:
-        story_info = {
-            'id': match['id'],
-            'media_name': match['canonical_domain'],
-            'media_url': match['canonical_domain'],
-            'title': match['article_title'],
-            'publish_date': dt.date.fromisoformat(match['publication_date']),
-            'url': match['url'],
-            'language': match['language'],
-            'indexed_date': ciso8601.parse_datetime(match['indexed_date']+"Z"),
-        }
-        if 'text_content' in match:
-            story_info['text'] = match['text_content']
-        return story_info
 
     @classmethod
     def _selector_query_clauses(cls, kwargs: dict) -> list[str]:
@@ -1230,8 +1183,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if not hits:
             return {}
 
-        # double conversion!
-        return self._match_to_row(_format_match(hits[0], expanded))
+        return self._hit_to_row(hits[0], self.fields(expanded), True)
 
     def paged_items(
             self, query: str,
@@ -1298,8 +1250,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             new_pt = _b64_encode_page_token(
                 _SORT_KEY_SEP.join([str(key) for key in hits[-1].meta.sort]))
 
-        # double conversion!
-        rows = self._matches_to_rows([_format_match(h, expanded) for h in hits])
+        fields = self.fields(expanded)
+        rows = [self._hit_to_row(h, fields, True) for h in hits]
         self.trace(Trace.RESULTS, "MC next %s rows %r", new_pt, rows)
         return (rows, new_pt)
 
@@ -1328,17 +1280,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     @classmethod
     def _hit_to_row(cls, hit: Hit, fields: list[str], return_none: bool = False) -> dict[str, Any]:
         """
-        format a Hit returned by ES into an external "row" for random_sample.
+        format a Hit returned by ES into an external "row" suitable for return.
         fields is a list of external/row field names to be returned.
-
-        Duplicates _format_match (above) AND _matches_to_rows,
-        BUT could not immediately replace them because:
-
-        1. omits fields not present in Hit (instead of returning None)
-           (this could be remedied with an optional argument)
-
-        2. result is not cacheable (contains date/datetime datatypes)
-           (could now be split, using the separate get and convert methods)
+        if return_none is set, return None for missing results
         """
         # iterates over _external_ names rather than just returned
         # fields to be able to return metadata fields.
