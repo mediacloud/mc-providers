@@ -1138,8 +1138,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def _parse_exception(self, multiline: str) -> ProviderParseException:
         """
-        take multiline parser error, and return ProviderParseException
+        take (multiline) parser error message, and return ProviderParseException
         """
+        # handle single lines (seen in sentry.io)
         lines = multiline.split("\n", 1)
         return ProviderParseException(lines[0], lines[1:])
 
