@@ -225,7 +225,7 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
         # NOTE! typing _client as Any to avoid type checking client calls
-        self._client: Any = SearchApiClient("mediacloud", self._base_url)
+        self._client = SearchApiClient("mediacloud", self._base_url)
         if self._timeout:
             self._client.TIMEOUT_SECS = self._timeout
 
@@ -261,12 +261,12 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         counter: Counter = Counter()
         for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
             self._incr_query_op("count-over-time")
-            results = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
-            countable = {i['date']: i['count'] for i in results}
+            res = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
+            countable = {i['date']: i['count'] for i in res}
             counter += Counter(countable)
 
-        counter_dict = dict(counter)
-        results = [Date(date=date, timestamp=date.timestamp(), count=count) for date, count in counter_dict.items()]
+        results = [Date(date=date, timestamp=date.timestamp(), count=count)
+                   for date, count in counter.items()]
         # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
         results.sort(key=lambda x: x["timestamp"])
         return CountOverTime(counts=results)

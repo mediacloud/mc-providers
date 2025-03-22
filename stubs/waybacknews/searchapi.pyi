@@ -1,18 +1,7 @@
 import datetime as dt
-from typing import Any, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
-from mc_providers.provider import AllItems, CountOverTime, Item, Items
-
-class Match(TypedDict):
-    """Wayback internal field names"""
-    domain: str
-    id: str
-    title: str
-    publish_date: str
-    url: str
-    language: str
-    archive_playback_url: str
-    article_url: str
+from mc_providers.provider import AllItems, Date, Item, Items
 
 class SearchApiClient:
     TIMEOUT_SECS: int
@@ -28,9 +17,20 @@ class SearchApiClient:
               **kwargs: Any) -> int: ...
 
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                        **kwargs: Any) -> CountOverTime: ...
+                        **kwargs: Any) -> List[Date]: ...
 
     def sample(self, query: str,
                start_date: dt.datetime, end_date: dt.datetime, limit: int,
                **kwargs: Any) -> Items: ...
 
+
+    def paged_articles(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                       page_size: Optional[int] = 1000,  expanded: bool = False,
+                       pagination_token: Optional[str] = None, **kwargs: Any) -> tuple[List[Dict], Optional[str]]:
+        ...
+
+    def top_languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> List[Dict]:
+        ...
+
+    def top_sources(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> List[Dict]:
+        ...
