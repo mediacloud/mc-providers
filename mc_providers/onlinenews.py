@@ -1140,8 +1140,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         take multiline parser error, and return ProviderParseException
         """
-        first, rest = multiline.split("\n", 1)
-        return ProviderParseException(first, rest)
+        lines = multiline.split("\n", 1)
+        return ProviderParseException(lines[0], lines[1:])
 
     @CachingManager.cache('overview')
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:
