@@ -17,7 +17,7 @@ import logging
 
 from elasticsearch_dsl.response import Response
 
-from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, ProviderException, TemporaryProviderException
+from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, TemporaryProviderException
 from mc_providers.onlinenews import OnlineNewsMediaCloudProvider
 
 def check(p, d):

@@ -1,10 +1,9 @@
 import datetime as dt
 import json
 import logging
-import os
 import random
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Mapping, NamedTuple, Optional, Sequence, TypeAlias, TypedDict
+from typing import Any, Dict, List, Mapping, NamedTuple, Optional, TypeAlias, TypedDict
 
 # PyPI
 import ciso8601
@@ -12,12 +11,11 @@ import dateparser     # used for publication_date in IA match_to_row
 import numpy as np              # for chunking
 from waybacknews.searchapi import SearchApiClient
 
-from .language import stopwords_for_language
 from .provider import (
     AllItems, ContentProvider, CountOverTime, Date,
     Item, Items, Language, Source, Terms, Trace,
-    make_term, terms_from_counts,
-    LANGUAGES_LIMIT, SAMPLE_LIMIT, SOURCES_LIMIT, WORDS_LIMIT
+    LANGUAGES_LIMIT, SAMPLE_LIMIT,
+    SOURCES_LIMIT, WORDS_LIMIT
 )
 from .cache import CachingManager
 
@@ -397,13 +395,11 @@ def match_formatted_search_strings(fuss: list[str]) -> str:
 # imports here in case split out into its own file
 import base64
 import json
-import os
 import time
 from enum import Enum
 from typing import TypeAlias
 
 import elasticsearch
-import mcmetadata.urls as urls
 from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
@@ -411,7 +407,7 @@ from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryStr
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
-from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, ProviderException, TemporaryProviderException
+from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, TemporaryProviderException
 
 ES_Fieldname: TypeAlias = str | InstrumentedField # quiet mypy complaints
 ES_Fieldnames: TypeAlias = list[ES_Fieldname]

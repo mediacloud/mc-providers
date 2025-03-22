@@ -6,7 +6,7 @@ import os
 import re
 import warnings
 from abc import ABC
-from typing import Any, Generator, Iterable, NoReturn, TypeAlias, TypedDict
+from typing import Any, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
 # PyPI:

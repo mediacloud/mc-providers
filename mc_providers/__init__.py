@@ -1,8 +1,8 @@
 import logging
-from typing import Any, List, NamedTuple, Optional
+from typing import Any, List, Optional
 
-from .exceptions import UnknownProviderException, MissingRequiredValue
-from .provider import ContentProvider, set_default_timeout
+from .exceptions import UnknownProviderException
+from .provider import ContentProvider
 # NOTE! DEFAULT_TIMEOUT no longer imported here:
 # doesn't change when set_default_timeout called!!!
 from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
