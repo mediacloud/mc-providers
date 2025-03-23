@@ -804,7 +804,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
 
         # rather than restorting to formatting/quoting query-string
-        # only to have ES have to parse it??
+        # only to have ES have to parse it:
         # For canonical_domain: "Match" query defaults to OR for space separated words
         # For url: use "Wildcard"??
         # Should initially take (another) temp kwarg bool to allow A/B testing!!!
@@ -814,7 +814,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if selector_clauses:
             sqs = cls._selector_query_string_from_clauses(selector_clauses)
             return FilterTuple(cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
-                               SanitizedQueryString(query=sqs))
+                               SanitizedQueryString(query=sqs,
+                                                    allow_leading_wildcard=True))
         else:
             # return dummy record, will be weeded out
             return FilterTuple(0, None)
