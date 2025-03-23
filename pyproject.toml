@@ -58,6 +58,10 @@ pre-commit = [
   "types-requests ~=2.32.0.20241016",
 ]
 
+[tool.autoflake]
+# leave unused imports in __init__.py files alone!
+ignore-init-module-imports = true
+
 [tool.flit.sdist]
 include = ["mc_providers/*.py","mc_providers/language/*.py", "mc_providers/language/*.bin", "mc_providers/language/*.txt" ]
 

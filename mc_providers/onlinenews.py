@@ -1136,9 +1136,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         take (multiline) parser error message, and return ProviderParseException
         """
-        # handle single lines (seen in sentry.io)
         lines = multiline.split("\n", 1)
-        return ProviderParseException(lines[0], lines[1:])
+        first = lines[0]
+        rest = lines[1:] or ""  # handle single line
+        return ProviderParseException(first, rest)
 
     @CachingManager.cache('overview')
     def _overview_query(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> Overview:

@@ -2,9 +2,9 @@ import logging
 from typing import Any, List, Optional
 
 from .exceptions import UnknownProviderException
-from .provider import ContentProvider
 # NOTE! DEFAULT_TIMEOUT no longer imported here:
 # doesn't change when set_default_timeout called!!!
+from .provider import ContentProvider, set_default_timeout
 from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
 
 
