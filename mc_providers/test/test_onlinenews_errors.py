@@ -2,22 +2,21 @@
 tests for OnlineNewsMediaCloudProvider._check_response
 which interprets elasticsearch_dsl Response objects
 
+and tests for OnlineNewsMediaCloudProvider._parse_exception
+which handles ES query parser errors
+
 [Phil: If you know me, I almost NEVER write static tests (IMO the
 cost/benefit is high most of the time), but errors don't grow on
 trees, and the code is complex and brittle, so here we are!]
 
 These tests are DEFINITELY too strict/rigid but they're a starting place!
-
-Should be runnable via:
-venv/bin/pip install python-dotenv pytest # only needed once
-venv/bin/pytest mc_providers/test/test_onlinenews_errors.py
 """
 
 import logging
 
 from elasticsearch_dsl.response import Response
 
-from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, TemporaryProviderException
+from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, TemporaryProviderException, ProviderParseException
 from mc_providers.onlinenews import OnlineNewsMediaCloudProvider
 
 def check(p, d):
@@ -164,3 +163,8 @@ def test_timed_out(caplog):
         assert len(caplog.records) == 0
         return
     assert False
+
+def test_one_line_parse_exception(caplog):
+    # test correct handling of a single line parse exception message
+    x = OnlineNewsMediaCloudProvider._parse_exception("""parse_exception: Cannot parse \'(((murder OR homicide OR femicide OR feminicide OR murdered OR dead OR death OR killed OR murdered OR shot OR stabbed OR struck OR strangled OR "life-less") AND (woman OR girl OR "a young woman" OR "a teenage girl" OR "a girl OR "body of a woman" OR prostitute OR "sex worker")) AND language:SW AND indexed_date:{2025-03-17T16:02:04.668442+00:00 TO 2025-03-22T16:02:04.668476+00:00]\': Lexical error at line 1, column 383.  Encountered: <EOF> after prefix "\\")) AND language:SW AND indexed_date:{2025-03-17T16:02:04.668442+00:00 TO 2025-03-22T16:02:04.668476+00:00]" (in lexical state 2)""")
+    assert isinstance(x, ProviderParseException)

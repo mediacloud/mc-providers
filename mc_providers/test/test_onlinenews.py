@@ -117,7 +117,10 @@ class OnlineNewsWaybackMachineProviderTest(unittest.TestCase):
         found_story_count = 0
         for page in self._provider.all_items(query, start_date, end_date):
             found_story_count += len(page)
-        assert found_story_count >= story_count # Phil: crock for Wayback
+        if type(self).__name__ == "OnlineNewsWaybackMachineProviderTest":
+            assert found_story_count >= story_count # Phil: crock for Wayback
+        else:
+            assert found_story_count == story_count
 
     def test_top_sources(self):
         results = self._provider.sources("coronavirus", dt.datetime(2023, 11, 1),

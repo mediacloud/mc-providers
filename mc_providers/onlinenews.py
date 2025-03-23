@@ -1133,7 +1133,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         logger.error("Unknown response error %r", res.to_dict())
         raise MysteryProviderException("Unknown error")
 
-    def _parse_exception(self, multiline: str) -> ProviderParseException:
+    @staticmethod               # for testing
+    def _parse_exception(multiline: str) -> ProviderParseException:
         """
         take (multiline) parser error message, and return ProviderParseException
         """
