@@ -960,7 +960,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         one place to send queries to ES, for logging
         """
         self._incr_query_op(op)
-        t0 = time.monotonic()
         execute_args = {}
         if self._caching < 0:
             # Here to try to force ES not to use cached results (for testing).
@@ -1077,7 +1076,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # process per-shard errors
             parse_error = ''
             permanent_shard_error = None
-            permanent_type = ''
 
             # hundreds of shards, so summarize...
             # (almost always circuit breakers)
