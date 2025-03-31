@@ -4,6 +4,7 @@ import unittest
 import os
 
 import mc_providers
+import mc_providers.provider as mc_p_p
 
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
 
@@ -22,16 +23,16 @@ class ModuleTest(unittest.TestCase):
 
     def test_default_timeout(self):
         # change it
-        assert mc_providers.DEFAULT_TIMEOUT == 60
-        mc_providers.set_default_timeout(120)
-        assert mc_providers.DEFAULT_TIMEOUT == 120
+        assert mc_p_p.DEFAULT_TIMEOUT == 60
+        mc_p_p.set_default_timeout(120)
+        assert mc_p_p.DEFAULT_TIMEOUT == 120
         # make sure it flows into provider
-        mc_providers.set_default_timeout(60)
+        mc_p_p.set_default_timeout(60)
         provider = mc_providers.provider_for(mc_providers.PLATFORM_ONLINE_NEWS,
                                              mc_providers.PLATFORM_SOURCE_MEDIA_CLOUD, MEDIA_CLOUD_API_KEY, None)
         assert provider._timeout == 60
         # make sure it flows into provider
-        mc_providers.set_default_timeout(120)
+        mc_p_p.set_default_timeout(120)
         provider = mc_providers.provider_for(mc_providers.PLATFORM_ONLINE_NEWS,
                                              mc_providers.PLATFORM_SOURCE_MEDIA_CLOUD, MEDIA_CLOUD_API_KEY, None)
         assert provider._timeout == 120

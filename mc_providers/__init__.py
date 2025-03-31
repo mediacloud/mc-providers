@@ -1,9 +1,12 @@
 import logging
-from typing import Any, List, NamedTuple, Optional
+from typing import Any, List, Optional
 
-from .exceptions import UnknownProviderException, MissingRequiredValue
-from .provider import ContentProvider, DEFAULT_TIMEOUT, set_default_timeout
-from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider, OnlineNewsMediaCloudESProvider
+from .exceptions import UnknownProviderException
+# NOTE! DEFAULT_TIMEOUT no longer imported here:
+# doesn't change when set_default_timeout called!!!
+from .provider import ContentProvider, set_default_timeout
+from .onlinenews import OnlineNewsWaybackMachineProvider, OnlineNewsMediaCloudProvider
+
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +29,7 @@ def provider_name(platform: str, source: str) -> str:
 # this map could ve constructed from just a list of classes.
 _PROVIDER_MAP: dict[str, type[ContentProvider]] = {
     provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_WAYBACK_MACHINE): OnlineNewsWaybackMachineProvider,
-    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): OnlineNewsMediaCloudESProvider,
+    provider_name(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD): OnlineNewsMediaCloudProvider,
 }
 
 _PROVIDER_NAMES: List[str] = list(_PROVIDER_MAP.keys())
