@@ -17,6 +17,7 @@ Releases > 4.0.0 will all be shared exclusively on github, and this project will
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v4.1.1__ - Add RAW_QUERY trace for introspecting ES payloads directly
 * __v4.1.0__ - Impovements to random_sample method, cleanup of vestigial new-search-api related code
 * __v4.0.1__ - WaybackMachineProvider.words now raises an error instead of waiting for timeout from IA
 * __v4.0.0__ - Remove unused providers and old news-search-api machinary, update mediacloud provider to limit subindexes used in search, update some internal fields 
