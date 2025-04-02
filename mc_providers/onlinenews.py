@@ -973,6 +973,9 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # basis. If set, it overrides the index-level setting"
             search = search.params(request_cache=False)
 
+        if self.trace_enabled(Trace.RAW_QUERY):
+            self.trace(Trace.RAW_QUERY, "query %r", search.to_dict())
+
         try:
             res = search.execute(**execute_args)
         except elasticsearch.exceptions.TransportError as e:
@@ -1000,6 +1003,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             raise PermanentProviderException(short, long) from e
 
         logger.debug("MC._search ES took %s ms", getattr(res, "took", -1))
+        if self.trace_enabled(Trace.RAW_RESPONSE):
+            self.trace(Trace.RAW_RESPONSE, "response %r", res.to_dict())
 
         if (pdata := getattr(res, "profile", None)):
             self._process_profile_data(pdata)  # displays ES total time
