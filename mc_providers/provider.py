@@ -122,8 +122,10 @@ class Trace:
     STATS = 5
     SUBINDICES = 8
     ARGS = 10            # constructor args
-    RESULTS = 20
-    QSTR = 50            # query string/args
+    RESULTS = 20         # provider method results
+    QSTR = 50            # provider method query string/args
+    RAW_QUERY = 60       # query as sent to search engine
+    RAW_RESPONSE = 70    # raw query results
     # even more noisy things, with higher numbers
     ALL = 1000
 
@@ -496,6 +498,13 @@ class ContentProvider(ABC):
         cls._trace = level
 
     @classmethod
+    def trace_enabled(cls, level: int) -> bool:
+        """
+        call to avoid unnecessary formatting before calling trace
+        """
+        return cls._trace >= level
+
+    @classmethod
     def trace(cls, level: int, format: str, *args: Any) -> None:
         """
         like logger.debug, but with additional gatekeeping.  trace level
@@ -506,7 +515,7 @@ class ContentProvider(ABC):
         See initialization of _trace above to see where the default
         value comes from
         """
-        if cls._trace >= level:
+        if cls.trace_enabled(level):
             logger.debug(format, *args)
 
     def __incr(self, name: str) -> None:
