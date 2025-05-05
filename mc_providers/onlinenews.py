@@ -552,7 +552,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     been detected earlier.
     """
 
-    BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
+    BASE_URL = ",".join("http://es{n:02d}.newsscribe.angwin:9209" for n in range(1,9))
     WORDS_SAMPLE = 5000
     STAT_NAME = "es"
 
@@ -1164,7 +1164,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
-        search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
+        search.aggs.bucket(AGG_LANG, "terms", field="language", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True, size=0)
         res = self._search(search, "overview") # run search, need .aggregations & .hits
