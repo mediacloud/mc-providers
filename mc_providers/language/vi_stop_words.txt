@@ -1,5 +1,6 @@
 # Stopwords for Vietnamese
 # Pulled in from old list found at https://github.com/Tarrasch/vietnamese-stopwords?tab=readme-ov-file
+# Note: we don't support multi-word tokens, whether or not they use _ as a separator like this file does
 
 à
 ạ
