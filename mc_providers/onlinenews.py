@@ -566,7 +566,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     # (with "get" and "convert" methods to fetch/parse field from Hit)
     _ES_FIELDS: dict[str, _ES_Field] = {
         "id": _ES_Field("id", metadata=True),
-        "indexed_date": _ES_DateTime("indexed_date"),
+        "indexed_date": _ES_DateTime("indexed_date"), # date_nanos
         "language": _ES_Field("language"),
         "media_name": _ES_Field("canonical_domain"),
         "media_url": _ES_Field("canonical_domain"),
@@ -1255,8 +1255,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         new_pt: str | None = None
         if len(hits) == page_size:
             # generate paging token from all sort keys of last item:
+            sort_key_vals = hits[-1].meta.sort
+            # indexed_data is nanoseconds, returned as int, but
+            # epoch_nanos not accepted by date parser, so format:
+            if sort_field == "indexed_date":
+                epoch_nanos = sort_key_vals[0]
+                last_date = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(epoch_nanos // 1000000000))
+                last_nanos = epoch_nanos % 1000000000
+                sort_key_vals[0] = f"{last_date}.{last_nanos:09d}Z"
             new_pt = _b64_encode_page_token(
-                _SORT_KEY_SEP.join([str(key) for key in hits[-1].meta.sort]))
+                _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
 
         fields = self.fields(expanded)
         rows = [self._hit_to_row(h, fields, True) for h in hits]
