@@ -552,7 +552,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     been detected earlier.
     """
 
-    BASE_URL = ",".join("http://es{n:02d}.newsscribe.angwin:9209" for n in range(1,9))
+    BASE_URL = ",".join(f"http://es{n:02d}.newsscribe.angwin:9209" for n in range(1,9))
     WORDS_SAMPLE = 5000
     STAT_NAME = "es"
 
