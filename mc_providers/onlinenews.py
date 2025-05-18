@@ -532,6 +532,9 @@ def _b64_decode_page_token(strng: str) -> str:
 # string to lower likelihood of appearing (default keys are numeric).
 _SORT_KEY_SEP = "\x01"
 
+ES_NODE_FORMAT = "http://es{:02d}.newsscribe.angwin:9209"
+ES_NODES = 8
+
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     version of MC Provider going direct to ES.
@@ -552,7 +555,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     been detected earlier.
     """
 
-    BASE_URL = ",".join(f"http://es{n:02d}.newsscribe.angwin:9209" for n in range(1,9))
+    BASE_URL = ",".join(ES_NODE_FORMAT.format(n) for n in range(1,ES_NODES+1))
     WORDS_SAMPLE = 5000
     STAT_NAME = "es"
 
