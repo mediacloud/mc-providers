@@ -421,7 +421,7 @@ _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 # Was publication_date, but web-search always passes indexed_date.
 # identical indexed_date values (without fractional seconds?!)  have
 # been seen in the wild (entire day 2024-01-10).  NOTE! Mapping/index
-# indexed_data has only ms, but retrieved document text may have μs.
+# indexed_date is now ns to reflect stored document time with μs.
 _DEF_SORT_FIELD = "indexed_date"
 _DEF_SORT_ORDER = "desc"
 
@@ -534,6 +534,8 @@ _SORT_KEY_SEP = "\x01"
 
 ES_NODE_FORMAT = "http://es{:02d}.newsscribe.angwin:9209"
 ES_NODES = 8
+
+NS_PER_SEC = 1000000000
 
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
@@ -1259,12 +1261,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         if len(hits) == page_size:
             # generate paging token from all sort keys of last item:
             sort_key_vals = hits[-1].meta.sort
-            # indexed_data is nanoseconds, returned as int, but
+            # indexed_date is nanoseconds, returned as int, but
             # epoch_nanos not accepted by date parser, so format:
             if sort_field == "indexed_date":
                 epoch_nanos = sort_key_vals[0]
-                last_date = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(epoch_nanos // 1000000000))
-                last_nanos = epoch_nanos % 1000000000
+                epoch_secs = epoch_nanos // NS_PER_SEC
+                last_date = time.strftime("%Y-%m-%dT%H:%M:%S",
+                                          time.gmtime(epoch_secs))
+                last_nanos = epoch_nanos % NS_PER_SEC
                 sort_key_vals[0] = f"{last_date}.{last_nanos:09d}Z"
             new_pt = _b64_encode_page_token(
                 _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
