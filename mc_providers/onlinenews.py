@@ -421,7 +421,7 @@ _ES_MAXPAGE = 1000              # define globally (ie; in .providers)???
 # Was publication_date, but web-search always passes indexed_date.
 # identical indexed_date values (without fractional seconds?!)  have
 # been seen in the wild (entire day 2024-01-10).  NOTE! Mapping/index
-# indexed_data has only ms, but retrieved document text may have μs.
+# indexed_date is now ns to reflect stored document time with μs.
 _DEF_SORT_FIELD = "indexed_date"
 _DEF_SORT_ORDER = "desc"
 
@@ -532,6 +532,11 @@ def _b64_decode_page_token(strng: str) -> str:
 # string to lower likelihood of appearing (default keys are numeric).
 _SORT_KEY_SEP = "\x01"
 
+ES_NODE_FORMAT = "http://es{:02d}.newsscribe.angwin:9209"
+ES_NODES = 8
+
+NS_PER_SEC = 1000000000
+
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     version of MC Provider going direct to ES.
@@ -552,7 +557,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     been detected earlier.
     """
 
-    BASE_URL = "http://ramos.angwin:9200,http://woodward.angwin:9200,http://bradley.angwin:9200"
+    BASE_URL = ",".join(ES_NODE_FORMAT.format(n) for n in range(1,ES_NODES+1))
     WORDS_SAMPLE = 5000
     STAT_NAME = "es"
 
@@ -566,7 +571,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     # (with "get" and "convert" methods to fetch/parse field from Hit)
     _ES_FIELDS: dict[str, _ES_Field] = {
         "id": _ES_Field("id", metadata=True),
-        "indexed_date": _ES_DateTime("indexed_date"),
+        "indexed_date": _ES_DateTime("indexed_date"), # date_nanos
         "language": _ES_Field("language"),
         "media_name": _ES_Field("canonical_domain"),
         "media_url": _ES_Field("canonical_domain"),
@@ -1164,7 +1169,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         search = self._basic_search(query, start_date, end_date, **kwargs)
         search.aggs.bucket(AGG_DAILY, "date_histogram", field="publication_date",
                            calendar_interval="day", min_doc_count=1)
-        search.aggs.bucket(AGG_LANG, "terms", field="language.keyword", size=100)
+        search.aggs.bucket(AGG_LANG, "terms", field="language", size=100)
         search.aggs.bucket(AGG_DOMAIN, "terms", field="canonical_domain", size=100)
         search = search.extra(track_total_hits=True, size=0)
         res = self._search(search, "overview") # run search, need .aggregations & .hits
@@ -1255,8 +1260,18 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         new_pt: str | None = None
         if len(hits) == page_size:
             # generate paging token from all sort keys of last item:
+            sort_key_vals = hits[-1].meta.sort
+            # indexed_date is nanoseconds, returned as int, but
+            # epoch_nanos not accepted by date parser, so format:
+            if sort_field == "indexed_date":
+                epoch_nanos = sort_key_vals[0]
+                epoch_secs = epoch_nanos // NS_PER_SEC
+                last_date = time.strftime("%Y-%m-%dT%H:%M:%S",
+                                          time.gmtime(epoch_secs))
+                last_nanos = epoch_nanos % NS_PER_SEC
+                sort_key_vals[0] = f"{last_date}.{last_nanos:09d}Z"
             new_pt = _b64_encode_page_token(
-                _SORT_KEY_SEP.join([str(key) for key in hits[-1].meta.sort]))
+                _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
 
         fields = self.fields(expanded)
         rows = [self._hit_to_row(h, fields, True) for h in hits]
