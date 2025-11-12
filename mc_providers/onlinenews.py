@@ -1412,7 +1412,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         num_date_buckets: int
         if interval == "day":
             date_format = "%Y-%m-%d"
-            date_delta.days
+            num_dates = date_delta.days
         if interval == "week":
             # supplied start/end dates should be first and last days of weeks!
             # NOTE! By default start buckets w/ monday dates.
