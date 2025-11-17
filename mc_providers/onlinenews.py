@@ -14,6 +14,7 @@ from waybacknews.searchapi import SearchApiClient
 from .provider import (
     AllItems, ContentProvider, CountOverTime, Date,
     Item, Items, Language, Source, Terms, Trace,
+    TwoDimensionalCounts,
     LANGUAGES_LIMIT, SAMPLE_LIMIT,
     SOURCES_LIMIT, WORDS_LIMIT
 )
@@ -32,8 +33,6 @@ class Overview(TypedDict):
     topdomains: Counts          # from _format_counts
     toplangs: Counts            # from _format_counts
     dailycounts: Counts         # from _format_day_counts
-
-SourcesByDate: TypeAlias = dict[str, Counts]
 
 class OnlineNewsAbstractProvider(ContentProvider):
     """
@@ -396,6 +395,7 @@ def match_formatted_search_strings(fuss: list[str]) -> str:
 
 # imports here in case split out into its own file
 import base64
+import calendar
 import json
 import time
 from enum import Enum
@@ -1381,66 +1381,90 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 (expanded and f.include == Include.EXPANDED))
         ]
 
-    #@CachingManager.cache() # enable if used for user-facing functions!!
-    def sources_by_date(self, query: str,
+    # not directly cacheable
+    def sources_by_date(self,
                         start_date: dt.datetime, end_date: dt.datetime,
-                        max_domains: Optional[int] = None,
-                        interval: Optional[str] = None,
-                        date_extras: dict[str, Any] = {},
-                        **kwargs: Any) -> SourcesByDate:
+                        *,
+                        # keywords required, so please keep alphabetical!
+                        interval: str | None = None, # day, month, week or year
+                        max_domains: int | None = None,
+                        query: str | None = None,
+                        **kwargs: Any) -> TwoDimensionalCounts:
         """
-        created for Media Cloud internal directory management!
-        Returns dictionary indexed by date of dicts indexed by domain of counts
+        created for Media Cloud internal directory management,
+        so user query string is optional.
         """
         AGG_DATE = 'date'
         AGG_SRCS = 'srcs'
 
+        # NOTE! Much of date checking is independnt of ES,
+        # and could be pulled out into a utility function!!
+
+        # check end_date > start_date? both before today's UTC date??
         date_delta = end_date - start_date
 
         # if no interval supplied, pick one
         # (maybe truncate date range to bucket boundaries?)
         if interval is None:
             if date_delta.days <= 31:
-                interval = "day"
+                interval = "day" # max 31 buckets
             elif date_delta.days <= 2*365+1:
-                interval = "month"
+                interval = "month" # max 24 buckets
             else:
                 interval = "year"
 
-        # num_date_buckets the number of date buckets based on date range
-        # by default (cluster setting), max total buckets is 65536.
-        # NOTE!!! Assumes start date is bucket aligned
-        # (first of month, start day of week, start of year)
+        # num_date_buckets the number of date buckets based on date range.
         num_date_buckets: int
+        date_extras: dict[str, Any] = {}
         if interval == "day":
             date_format = "%Y-%m-%d"
             num_dates = date_delta.days
         if interval == "week":
             # supplied start/end dates should be first and last days of weeks!
-            # NOTE! By default start buckets w/ monday dates.
-            # Supply date_extras={"offset": "-1d"} for Sunday.
-            # Partial weeks before or after will create extra buckets!!
+            start_dow = start_date.weekday()
+            end_dow = (start_dow + 7 - 1) % 7 # end on previous day of week from start
+            got_end_dow = end_date.weekday()
+            if got_end_dow != end_dow:
+                raise ValueError(f"start dow is {start_dow} expected end dow {end_dow}, got {got_end_dow}")
+            if start_dow != 0:
+                # both datetime.date and ES use 0 for Monday
+                # want "-1d" for Sunday(6), "-6d" for Tuesday(1)
+                date_extras["offset"] = f"{end_dow-7}d"
             date_format = "%Y-%m-%d"
-            num_dates = int(date_delta.days / 7 + 0.9) # WRONG!
+            num_dates = (date_delta.days + 1) // 7
         elif interval == "month":
-            # supplied start/end dates should be first and last days of months!
+            if start_date.day != 1:
+                # maybe allow any start_date.day if end_date.day is start_date.day - 1?
+                raise ValueError("start day is not the first of month")
+            # https://stackoverflow.com/questions/42950/get-the-last-day-of-the-month
+            eom = calendar.monthrange(end_date.year, end_date.month)[1]
+            if end_date.day != eom:
+                raise ValueError(f"{end_date} is not the end of a month!")
             date_format = "%Y-%m"
             num_dates = ((end_date.year - start_date.year) * 12 +
                          (end_date.month - start_date.month + 1))
         elif interval == "year":
-            # supplied start/end dates should be first and last days of year!!
+            # accept first of month, and last day of previous month?
+            # or any month, day as start, and previous day as end??
+            if start_date.day != 1 or start_date.month != 1:
+                raise ValueError(f"start date is not january 1")
+            if end_date.day != 12 or end_date.month != 31:
+                raise ValueError(f"start date is not december 31")
             date_format = "%Y"
             num_dates = end_date.year - start_date.year + 1
         else:
             raise ValueError(f"unknown interval {interval}")
 
         if max_domains is None:
-            # use reduced total bucket count to allow for
-            # non-bucket-aligned dates creating extra buckets?
-            max_domains = 60000 // num_dates
+            # By default (cluster setting), max total buckets is 65536.
+            max_domains = 65536 // num_dates
+
+        if not query:
+            query = self.everything_query()
 
         search = self._basic_search(query, start_date, end_date, **kwargs)\
                      .extra(size=0) # just aggs
+
         # nested buckets!
         search.aggs.bucket(AGG_DATE, "date_histogram",
                            field="publication_date",
@@ -1449,14 +1473,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                    .bucket(AGG_SRCS, "terms",
                            field="canonical_domain",
                            size=max_domains)
-        res = self._search(search, "src_by_date")
-        ret: SourcesByDate  = {}
+        with self._count_time("src_by_date"):
+            res = self._search(search, "src_by_date")
         date_buckets = cast(list[dict[str, Any]], res.aggregations[AGG_DATE])
-        for date in date_buckets:
-            # key is epoch UTC milliseconds
-            tm = time.gmtime(int(date['key']) // 1000)
-            fdate = time.strftime(date_format, tm) # formatted date
-            ret[fdate] = {str(b["key"]): int(b["doc_count"])
-                          for b in date[AGG_SRCS]['buckets']}
-        # maybe return top level TypedDict with totals (if any) returned with query result?
-        return ret
+        out: dict[str, Counter[str]] = {
+            # returned "key" is epoch milliseconds: format according to interval
+            time.strftime(date_format, time.gmtime(int(date["key"]) // 1000)):
+            Counter({str(b["key"]): int(b["doc_count"])
+                     for b in date[AGG_SRCS]['buckets']})
+            for date in date_buckets
+        }
+        return TwoDimensionalCounts(out)

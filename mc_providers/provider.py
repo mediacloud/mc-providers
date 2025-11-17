@@ -119,6 +119,51 @@ class _Term(TypedDict):
 
 Terms: TypeAlias = list[_Term]
 
+
+class TwoDimensionalCounts:
+    """
+    return type for a two-dimensional aggregation
+    designed to be agnostic about keys (must both be strings).
+
+    Could add more methods for fractions of totals.
+
+    Could add "reverse" method to invert key order!
+    """
+    def __init__(self, buckets: dict[str, collections.Counter[str]]):
+        self.buckets = buckets
+        self._inner_keys: set | None = None
+        self._inner_totals: collections.Counter[str] | None = None
+        self._total: int | None = None
+
+    def inner_keys(self) -> set[str]:
+        """
+        set of keys from all inner buckets
+        """
+        if self._inner_keys is None:
+            self._inner_keys = set()
+            for row in self.buckets.values():
+                self._inner_keys.update(row.keys())
+        return self._inner_keys
+
+    def inner_totals(self) -> collections.Counter[str]:
+        """
+        total by inner key of all inner buckets
+        """
+        if self._inner_totals is None:
+            self._inner_totals = collections.Counter()
+            for row in self.buckets.values():
+                self._inner_totals += row
+        return self._inner_totals
+
+    def total(self) -> int:
+        """
+        total of all counts
+        """
+        if self._total is None:
+            self._total = sum(self.inner_totals().values())
+        return self._total
+
+
 class Trace:
     # less noisy things, with lower numbers
     STATS = 5
@@ -428,6 +473,16 @@ class ContentProvider(ABC):
         results = terms_from_counts(term_counts, doc_counts, title_count, limit)
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results
+
+    def sources_by_date(self,
+                        start_date: dt.datetime, end_date: dt.datetime,
+                        *,
+                        # keywords required, so please keep alphabetical!
+                        interval: str | None = None, # day, month, week or year
+                        max_domains: int | None = None,
+                        query: str | None = None,
+                        **kwargs: Any) -> TwoDimensionalCounts:
+        raise NotImplementedError("sources_by_date not implemented")
 
     # from story-indexer/indexer/story.py:
     # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
