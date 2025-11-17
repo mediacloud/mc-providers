@@ -4,8 +4,10 @@ import importlib.metadata       # to get version for SOFTWARE_ID
 import logging
 import os
 import re
+import time
 import warnings
 from abc import ABC
+from types import TracebackType
 from typing import Any, Iterable, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
@@ -166,6 +168,34 @@ def terms_from_counts(term_counts: collections.Counter[str],
     return [make_term(term, term_count, doc_counts[term], sample_size)
             for term, term_count in term_counts.most_common(limit)]
 
+class _TimingContext:
+    """
+    a "with" context for timing a block of code
+    returned by "_time_query"
+    """
+
+    def __init__(self, provider: "ContentProvider", op: str):
+        self.provider = provider
+        self.op = op
+        self.t0 = -1.0
+
+    def __enter__(self) -> None:
+        assert self.t0 < 0  # make sure not active!
+        self.provider._count(self.op)
+        self.t0 = time.monotonic()
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        assert self.t0 > 0  # check enter'ed
+        if not exc_type:
+            ms = (time.monotonic() - self.t0) * 1000
+            self.provider._timing(self.op, ms)
+        self.t0 = -1.0
+
 class ContentProvider(ABC):
     """
     An abstract wrapper to be implemented for each platform we want to preview content from.
@@ -184,6 +214,8 @@ class ContentProvider(ABC):
     CACHING = 1
     SESSION_ID = ""
     SOFTWARE_ID = f"mc-providers {VERSION}"
+    TIME_BY_OP = 0          # override to enable timing individual ops
+
     # TIMEOUT *NOT* defined, uses global DEFAULT_TIMEOUT below
     TRACE = 0
 
@@ -230,6 +262,8 @@ class ContentProvider(ABC):
             self._statsd_client = statsd.StatsdClient(
                 statsd_host, None,
                 f"{statsd_prefix}.provider.{self.STAT_NAME}")
+
+        self._time_by_op = self._env_int(0, "TIME_BY_OP", 0)
 
     def everything_query(self) -> str:
         raise QueryingEverythingUnsupportedQuery()
@@ -518,28 +552,31 @@ class ContentProvider(ABC):
         if cls.trace_enabled(level):
             logger.debug(format, *args)
 
-    def __incr(self, name: str) -> None:
+    def _count_time(self, op: str) -> _TimingContext:
         """
-        statsd creates two files per counter.
-        create a new helper (like _incr_query_op)
-        for each new class of counters
-        """
-        self.trace(Trace.STATS, "incr %s", name)
-        if self._statsd_client:
-            self._statsd_client.incr(name)
-
-    def _incr_query_op(self, op: str) -> None:
-        """
-        called each time a backing client is called
-        op name should be related to Provider.method (with dashes)
+        called for each query method to create context;
+        op name should be Provider.method (with dashes)
         """
         op = op.replace("_", "-")
-        self.__incr(f"query.op_{op}") # using label_value
+        return _TimingContext(self, op)
 
-    def _timing(self, name: str, ms: float) -> None:
-        # for timings statsd makes 54 files (38MB per metric per app)
-        # so easy to waste lots of space....
-        raise NotImplementedError("statsd timing not yet implemented")
+    def _count(self, op: str) -> None:
+        """
+        called from _TimingContext
+        """
+        self.trace(Trace.STATS, "_count %s", op)
+        if self._statsd_client:
+            self._statsd_client.incr(f"query.op_{op}")
+
+    def _timing(self, op: str, ms: float) -> None:
+        """
+        called from _TimingContext
+        """
+        self.trace(Trace.STATS, "_timing %s %.3f", op, ms)
+        if self._statsd_client:
+            self._statsd_client.timing("all", ms)
+            if self._time_by_op:
+                self._statsd_client.timing(f"query.op_{op}", ms)
 
 # used in normalized_count_over_time
 def _combined_split_and_normalized_counts(matching_results: list[_DateCount], total_results: list[_DateCount]) -> list[_CombinedDateInfo]:

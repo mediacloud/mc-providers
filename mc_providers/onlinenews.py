@@ -236,10 +236,10 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SAMPLE_LIMIT,
                **kwargs: Any) -> Items:
         results = []
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("sample")
-            this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
-            results.extend(this_results)
+        with self._count_time("sample"):
+            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+                this_results = self._client.sample(subquery, start_date, end_date, **kwargs)
+                results.extend(this_results)
 
         if len(results) > limit:
             results = random.sample(results, limit)
@@ -249,38 +249,38 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
     # Chunk'd
     def count(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> int:
         count = 0
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("count")
-            count += self._client.count(subquery, start_date, end_date, **kwargs)
+        with self._count_time("count"):
+            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+                count += self._client.count(subquery, start_date, end_date, **kwargs)
         return count
 
     # Chunk'd
     def count_over_time(self, query: str, start_date: dt.datetime, end_date: dt.datetime, **kwargs: Any) -> CountOverTime:
         counter: Counter = Counter()
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("count-over-time")
-            res = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
+        with self._count_time("count-over-time"):
+            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+                res = self._client.count_over_time(subquery, start_date, end_date, **kwargs)
             countable = {i['date']: i['count'] for i in res}
             counter += Counter(countable)
 
         results = [Date(date=date, timestamp=date.timestamp(), count=count)
                    for date, count in counter.items()]
-        # Somehow the order of this list gets out of wack. Sorting before returning for the sake of testability
+        # Sorting before returning for the sake of testability
         results.sort(key=lambda x: x["timestamp"])
         return CountOverTime(counts=results)
 
     @CachingManager.cache()
     def item(self, item_id: str) -> Item:
-        self._incr_query_op("item")
-        one_item = self._client.article(item_id)
+        with self._count_time("item"):
+            one_item = self._client.article(item_id)
         return self._match_to_row(one_item)
 
     # Chunk'd
     def all_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any) -> AllItems:
-        for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
-            self._incr_query_op("all-items")
-            for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
-                yield self._matches_to_rows(page)
+        with self._count_time("all-items"):
+            for subquery in self._assemble_and_chunk_query_str(query, **kwargs):
+                for page in self._client.all_articles(subquery, start_date, end_date, **kwargs):
+                    yield self._matches_to_rows(page)
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000, **kwargs: Any)\
             -> tuple[List[Dict], Optional[str]] :
@@ -290,23 +290,23 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
         the right page of results.
         """
         updated_kwargs = {**kwargs, 'chunk': False}
-        query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
-        self._incr_query_op("paged-items")
-        page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
+        with self._count_time("paged-items"):
+            query = self._assemble_and_chunk_query_str_kw(query, updated_kwargs)[0]
+            page, pagination_token = self._client.paged_articles(query, start_date, end_date, **kwargs)
         return self._matches_to_rows(page), pagination_token
 
     # Chunk'd
     def languages(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = LANGUAGES_LIMIT,
                   **kwargs: Any) -> List[Language]:
 
-        matching_count = self.count(query, start_date, end_date, **kwargs)
+        with self._count_time("languages"):
+            matching_count = self.count(query, start_date, end_date, **kwargs)
 
-        results_counter: Counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("languages")
-            this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
-            countable = {item["name"]: item["value"] for item in this_languages}
-            results_counter += Counter(countable)
+            results_counter: Counter = Counter({})
+            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+                this_languages = self._client.top_languages(subquery, start_date, end_date, **kwargs)
+                countable = {item["name"]: item["value"] for item in this_languages}
+                results_counter += Counter(countable)
 
         # if client returns aggregated count of languages across all documents,
         # no rounding should be applied (exact counts)
@@ -323,11 +323,11 @@ class OnlineNewsWaybackMachineProvider(OnlineNewsAbstractProvider):
                 **kwargs: Any) -> List[Source]:
 
         results_counter: Counter = Counter({})
-        for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
-            self._incr_query_op("sources")
-            results = self._client.top_sources(subquery, start_date, end_date)
-            countable = {source['name']: source['value'] for source in results}
-            results_counter += Counter(countable)
+        with self._count_time("sources"):
+            for subquery in self._assemble_and_chunk_query_str_kw(query, kwargs):
+                results = self._client.top_sources(subquery, start_date, end_date)
+                countable = {source['name']: source['value'] for source in results}
+                results_counter += Counter(countable)
 
         cleaned_sources = [Source(source=source, count=count) for source, count in results_counter.items()]
         cleaned_sources = sorted(cleaned_sources, key=lambda x: x['count'], reverse=True)
@@ -557,15 +557,18 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     been detected earlier.
     """
 
+    # default values for _env_XXX calls (in alphabetical order):
     BASE_URL = ",".join(ES_NODE_FORMAT.format(n) for n in range(1,ES_NODES+1))
-    WORDS_SAMPLE = 5000
+    INDEX_PREFIX = "mc_search"
+    TIME_BY_OP = 1          # individual query timings
+    USE_SUBINDEX_LIST = 0   # default to searching all ILM sub-indices
+
+    # overrides:
     STAT_NAME = "es"
+    WORDS_SAMPLE = 5000
 
     # elasticsearch ApiError meta.status codes to translate to TemporaryProviderException
     APIERROR_STATUS_TEMPORARY = [408, 429, 502, 503, 504]
-
-    USE_SUBINDEX_LIST = 0   # default to searching all ILM sub-indices
-    INDEX_PREFIX = "mc_search"
 
     # map external ("row") field name to _ES_Field instance
     # (with "get" and "convert" methods to fetch/parse field from Hit)
@@ -901,9 +904,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         search = Search(index=name, using=self._es).extra(size=0) # just aggs
         search.aggs.bucket(AGG, 'max', field='indexed_date')
-
-        self._incr_query_op("get-last-indexed")
-        res = search.execute()
+        with self._count_time("get-last-indexed"):
+            res = search.execute()
         # XXX maybe call _check_response(res)??
         t = res.aggregations[AGG].value_as_string
         assert isinstance(t, str)
@@ -964,7 +966,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         """
         one place to send queries to ES, for logging
         """
-        self._incr_query_op(op)
         execute_args = {}
         if self._caching < 0:
             # Here to try to force ES not to use cached results (for testing).
@@ -982,7 +983,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             self.trace(Trace.RAW_QUERY, "query %r", search.to_dict())
 
         try:
-            res = search.execute(**execute_args)
+            with self._count_time(op):
+                res = search.execute(**execute_args)
         except elasticsearch.exceptions.TransportError as e:
             logger.debug("%r: %r", e, search.to_dict())
             raise TemporaryProviderException("networking") from e
