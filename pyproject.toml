@@ -8,6 +8,7 @@ version = "4.2.0"
 authors = [
     {name = "Paige Gulley", email = "nano3.14@gmail.com"},
     {name = "Rahul Bhargava", email = "r.bhargava@northeastern.edu"},
+    {name = "Phil Budne", email = "phil.budne@gmail.com"},
 ]
 description = "Search Providers package for Mediacloud"
 readme = "README.md"
@@ -56,6 +57,7 @@ test = [
 pre-commit = [
   "types-dateparser ~=1.2.0.20250208",
   "types-requests ~=2.32.0.20241016",
+  "types-python-dateutil",
 ]
 
 [tool.autoflake]
