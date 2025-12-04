@@ -580,7 +580,9 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert self.total(r) > 35000000
 
     def test_2d_week_monday(self):
-        # three weeks, monday start (default case)
+        """
+        three weeks, monday start (default case)
+        """
         r = self.help2d(dt.datetime(2025,10,6), None, num_intervals=3, interval="week")
 
         assert r["end_date"] == "2025-10-26"
@@ -592,7 +594,9 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert self.total(r) >  7278500
 
     def test_2d_week_sunday(self):
-        # two weeks, sunday start:
+        """
+        two weeks, sunday start
+        """
         r = self.help2d(dt.datetime(2025,10,5), None, interval="week", num_intervals=2)
 
         assert r["end_date"] == "2025-10-18"
@@ -604,18 +608,24 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert self.total(r) > 4800000
 
     def test_2d_year(self):
-        # note: end_date given
+        """
+        end_date given, languages
+        """
         r = self.help2d(None, dt.datetime(2023,12,31), num_intervals=2, interval="year",
                         inner_field="language")
 
         assert r["start_date"] == "2022-01-01"
         b = r["buckets"]
+        assert "en" in b["2022-01-01"]
         assert len(b["2022-01-01"]) < 100
+        assert "en" in b["2023-01-01"]
         assert len(b["2023-01-01"]) < 100
 
     def test_2d_src_vs_language(self):
-        # use for language detection?
-        # fixed range (no interval/num_intervals)
+        """
+        use for language detection?
+        fixed range (no interval/num_intervals)
+        """
         r = self._provider.two_d_aggregation(start_date=dt.datetime(2025, 10, 1),
                                              end_date=dt.datetime(2025, 10, 31),
                                              outer_field="media_name",
@@ -636,29 +646,21 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert b["wsj.com"]["en"] > 100
 
     def test_2d_days(self):
-        # note: end_date given
         r = self.help2d(dt.datetime(2021,1,1), None,
                         num_intervals=365, interval="day",
                         inner_field="language", max_inner_buckets=2)
         assert r["end_date"] == "2021-12-31"
 
-        r = self._provider.two_d_aggregation(start_date=dt.datetime(2025, 10, 1),
-                                             end_date=dt.datetime(2025, 10, 31),
-                                             outer_field="media_name",
-                                             inner_field="language",
-                                             max_inner_buckets=3,
-                                             domains=["yahoo.com", "nytimes.com",
-                                                      "wsj.com", "lemonde.fr"])
-
     def test_indexed_date(self):
+        """
+        test "indexed_date=bool" kwarg: selects stories by
+        indexed_date (for collection maintenance using 2d aggregation).
 
-        # test "indexed_date=bool" kwarg: selects stories by
-        # indexed_date (for collection maintenance using 2d aggregation).
+        should have no articles indexed before new system started (Oct '23)
+        NOTE! Does not effect bucket dates (still by pub date)
 
-        # should have no articles indexed before new system started (Oct '23)
-        # NOTE! Does not effect bucket dates (still by pub date)
-
-        # same date range as test_pub_date (below)
+        same date range as test_pub_date (below)
+        """
         results = self._provider.count_over_time("*",
                                                  dt.datetime(2023, 9, 1),
                                                  dt.datetime(2023, 9, 30),
@@ -668,8 +670,10 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(results["counts"]) == 0
 
     def test_pub_date(self):
-        # same date range as test_indexed_date (above)
-        # date range AND outer buckets are indexed_date:
+        """
+        same date range as test_indexed_date (above)
+        date range AND outer buckets are published date
+        """
         results = self._provider.count_over_time("*",
                                                  dt.datetime(2023, 9, 1),
                                                  dt.datetime(2023, 9, 30),
@@ -678,7 +682,9 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert len(results["counts"]) == 30
 
     def test_2d_indexed_date(self):
-        # 2D aggregation w/ indexed_date bucket names & dates
+        """
+        2D aggregation w/ indexed_date bucket names & dates
+        """
         r = self._provider.two_d_aggregation(start_date=dt.datetime(2023, 10, 1),
                                              outer_field="indexed_date",
                                              interval="month",
@@ -688,6 +694,6 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
                                              domains=["nytimes.com"])
         print(r)
         b = r["buckets"]
-        assert "2023-10-01" not in b
+        assert "2023-10-01" not in b # before new system started!
         assert b["2023-11-01"]["nytimes.com"] > 2300
         assert b["2023-12-01"]["nytimes.com"] > 4200
