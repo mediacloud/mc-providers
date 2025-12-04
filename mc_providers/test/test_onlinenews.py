@@ -1,4 +1,5 @@
 import unittest
+import collections
 import datetime as dt
 import itertools
 import random
@@ -511,3 +512,188 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         self._test_random_sample(["id", "indexed_date", "language",
                                   "media_name", "media_url", "publish_date",
                                   "text", "title", "url"], page_size=2)
+
+    @staticmethod
+    def inner_keys(tdc) -> set[str]:
+        """
+        set of keys from all inner buckets
+        helper for 2d tests
+        """
+        ret = set()
+        for row in tdc["buckets"].values():
+            ret.update(row.keys())
+        return ret
+
+
+    @staticmethod
+    def inner_totals(tdc) -> collections.Counter[str]:
+        """
+        totals of inner buckets
+        helper for 2d tests
+        """
+        ret = collections.Counter()
+        for row in tdc["buckets"].values():
+            ret += row
+        return ret
+
+    @classmethod
+    def total(cls, tdc) -> int:
+        """
+        total of all counts
+        helper for 2d tests
+        """
+        return sum(cls.inner_totals(tdc).values())
+
+    def help2d(self, start, end, **kwargs):
+        """
+        helper for 2D testing
+        """
+        r = self._provider.two_d_aggregation(start_date=start, end_date=end, **kwargs)
+        print("====", start, end, kwargs)
+        mib = r["max_inner_buckets"]
+        for date, values in r["buckets"].items():
+            lvk = len(values.keys())
+            print(date, lvk, "buckets", sum(values.values()), "stories")
+            assert lvk <= mib
+
+        for k in ["start_date", "end_date", "max_inner_buckets", "max_outer_buckets"]:
+            print(k, r[k])
+
+        assert len(r["buckets"]) == r["max_outer_buckets"]
+        return r
+
+    def test_2d_no_dates(self):
+        try:
+            self.help2d(None, None, num_intervals=3, interval="week")
+            raise Exception("should have failed")
+        except ValueError:
+            print("OK")
+
+    def test_2d_month(self):
+        r = self.help2d(dt.datetime(2025,1,1), None, num_intervals=3, interval="month")
+        assert r["end_date"] == "2025-03-31"
+        b = r["buckets"]
+        assert len(b["2025-01-01"]) > 19000
+        assert len(b["2025-02-01"]) > 19000
+        assert len(b["2025-03-01"]) > 19000
+        assert len(self.inner_keys(r)) > 24000
+        assert self.total(r) > 35000000
+
+    def test_2d_week_monday(self):
+        """
+        three weeks, monday start (default case)
+        """
+        r = self.help2d(dt.datetime(2025,10,6), None, num_intervals=3, interval="week")
+
+        assert r["end_date"] == "2025-10-26"
+        b = r["buckets"]
+        assert len(b["2025-10-06"]) > 14000
+        assert len(b["2025-10-13"]) > 14000
+        assert len(b["2025-10-20"]) > 14000
+        assert len(self.inner_keys(r)) > 17400
+        assert self.total(r) >  7278500
+
+    def test_2d_week_sunday(self):
+        """
+        two weeks, sunday start
+        """
+        r = self.help2d(dt.datetime(2025,10,5), None, interval="week", num_intervals=2)
+
+        assert r["end_date"] == "2025-10-18"
+        b = r["buckets"]
+        assert len(b["2025-10-05"]) > 14800
+        assert len(b["2025-10-12"]) > 14800
+        assert b["2025-10-05"]["nytimes.com"] > 1200
+        assert len(self.inner_keys(r)) > 16000
+        assert self.total(r) > 4800000
+
+    def test_2d_year(self):
+        """
+        end_date given, languages
+        """
+        r = self.help2d(None, dt.datetime(2023,12,31), num_intervals=2, interval="year",
+                        inner_field="language")
+
+        assert r["start_date"] == "2022-01-01"
+        b = r["buckets"]
+        assert "en" in b["2022-01-01"]
+        assert len(b["2022-01-01"]) < 100
+        assert "en" in b["2023-01-01"]
+        assert len(b["2023-01-01"]) < 100
+
+    def test_2d_src_vs_language(self):
+        """
+        use for language detection?
+        fixed range (no interval/num_intervals)
+        """
+        r = self._provider.two_d_aggregation(start_date=dt.datetime(2025, 10, 1),
+                                             end_date=dt.datetime(2025, 10, 31),
+                                             outer_field="media_name",
+                                             inner_field="language",
+                                             max_inner_buckets=3,
+                                             domains=["yahoo.com", "nytimes.com",
+                                                      "wsj.com", "lemonde.fr"])
+
+        b = r["buckets"]
+        assert 1 <= len(b["yahoo.com"]) <= 3
+        assert b["yahoo.com"]["en"] > 31000
+        assert b["yahoo.com"]["zh"] > 100000 # !!
+        assert 1 <= len(b["nytimes.com"]) <= 3
+        assert b["nytimes.com"]["en"] > 5900
+        assert 1 <= len(b["lemonde.fr"]) <= 3
+        assert b["lemonde.fr"]["fr"] > 2900
+        assert 1 <= len(b["wsj.com"]) <= 3
+        assert b["wsj.com"]["en"] > 100
+
+    def test_2d_days(self):
+        r = self.help2d(dt.datetime(2021,1,1), None,
+                        num_intervals=365, interval="day",
+                        inner_field="language", max_inner_buckets=2)
+        assert r["end_date"] == "2021-12-31"
+
+    def test_indexed_date(self):
+        """
+        test "indexed_date=bool" kwarg: selects stories by
+        indexed_date (for collection maintenance using 2d aggregation).
+
+        should have no articles indexed before new system started (Oct '23)
+        NOTE! Does not effect bucket dates (still by pub date)
+
+        same date range as test_pub_date (below)
+        """
+        results = self._provider.count_over_time("*",
+                                                 dt.datetime(2023, 9, 1),
+                                                 dt.datetime(2023, 9, 30),
+                                                 domains=["nytimes.com"],
+                                                 indexed_date=True
+                                                 )
+        assert len(results["counts"]) == 0
+
+    def test_pub_date(self):
+        """
+        same date range as test_indexed_date (above)
+        date range AND outer buckets are published date
+        """
+        results = self._provider.count_over_time("*",
+                                                 dt.datetime(2023, 9, 1),
+                                                 dt.datetime(2023, 9, 30),
+                                                 domains=["nytimes.com"],
+                                                 )
+        assert len(results["counts"]) == 30
+
+    def test_2d_indexed_date(self):
+        """
+        2D aggregation w/ indexed_date bucket names & dates
+        """
+        r = self._provider.two_d_aggregation(start_date=dt.datetime(2023, 10, 1),
+                                             outer_field="indexed_date",
+                                             interval="month",
+                                             num_intervals=3,
+                                             # default inner field (domain)
+                                             max_inner_buckets=3,
+                                             domains=["nytimes.com"])
+        print(r)
+        b = r["buckets"]
+        assert "2023-10-01" not in b # before new system started!
+        assert b["2023-11-01"]["nytimes.com"] > 2300
+        assert b["2023-12-01"]["nytimes.com"] > 4200

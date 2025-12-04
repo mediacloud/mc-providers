@@ -397,10 +397,11 @@ import base64
 import json
 import time
 from enum import Enum
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import elasticsearch
 from elasticsearch_dsl import Search, Response
+from elasticsearch_dsl.aggs import A
 from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
 from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryString
@@ -408,6 +409,9 @@ from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
 from .exceptions import MysteryProviderException, ProviderParseException, PermanentProviderException, TemporaryProviderException
+
+from .provider import (TwoDimensionalCounts, TwoDAggInterval)
+
 
 ES_Fieldname: TypeAlias = str | InstrumentedField # quiet mypy complaints
 ES_Fieldnames: TypeAlias = list[ES_Fieldname]
@@ -460,6 +464,9 @@ class SanitizedQueryString(QueryString):
         super().__init__(query=sanitized, **kwargs)
 
 class Include(Enum):
+    """
+    when to include field in results
+    """
     DEFAULT = 0                 # include by default
     EXPANDED = 1                # include if expanded=True
     OPTIONAL = 2                # include if requested
@@ -537,6 +544,10 @@ ES_NODES = 8
 
 NS_PER_SEC = 1000000000
 
+# number of leading characters of ..._as_string to use for dates;
+# string truncation works for both date and date_nanos fields
+DATE_LEN = 10                                 # YYYY-MM-DD
+
 class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     """
     version of MC Provider going direct to ES.
@@ -583,6 +594,17 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         "title": _ES_Field("article_title"),
         "url": _ES_Field("url"),
     }
+
+    # two_d_aggregations:
+
+    # default (cluster setting), max total buckets is 65536,
+    # but STILL can get "too_many_buckets_exception"
+    MAX_2D_AGG_BUCKETS = 65536
+
+    # external field names, first is default
+    OUTER_2D_AGG_BUCKETS = ["publish_date", "indexed_date",
+                            "media_name", "language"]
+    INNER_2D_AGG_BUCKETS = ["media_name", "language"]
 
     def __init__(self, **kwargs: Any):
         """
@@ -829,7 +851,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             return FilterTuple(0, None)
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
-                     expanded: bool = False, source: bool = True, **kwargs: Any) -> Search:
+                      expanded: bool = False, source: bool = True,
+                      indexed_date: bool = False, **kwargs: Any) -> Search:
         """
         from news-search-api/api.py cs_basic_query
         create a elasticsearch_dsl query from user_query, date range, and kwargs
@@ -843,7 +866,11 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # check for extraneous arguments
         self._check_kwargs(kwargs)
 
-        s = Search(index=self._index_from_dates(start_date, end_date), using=self._es)
+        # restricting searched indexes to those that can contain the date range
+        # MAY eliminate sending the query (across nodes) to a servers with applicable
+        # shards
+        s = Search(index=self._index_from_dates(start_date, end_date, indexed_date),
+                   using=self._es)
 
         if self._profile_current_search:
             s = s.extra(profile=True)
@@ -868,9 +895,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # Try to apply filter with the smallest result set (most selective) first,
         # to cut down document set as soon as possible.
 
+        if indexed_date:
+            date_range = Range(indexed_date={'gte': start, "lte": end})
+        else:
+            date_range = Range(publication_date={'gte': start, "lte": end})
+
         days = (end_date - start_date).days + 1
         filters : list[FilterTuple] = [
-            FilterTuple(days * self.DAY_WEIGHT, Range(publication_date={'gte': start, "lte": end})),
+            FilterTuple(days * self.DAY_WEIGHT, date_range),
             self._selector_filter_tuple(kwargs)
             # could include languages (etc) here
         ]
@@ -894,22 +926,26 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # or len(results["hits"]) == 0
         return results["total"] == 0
 
-    def _get_last_indexed(self, name: str) -> str:
+    def _get_indexed_dates(self, name: str) -> list[str]:
         """
         Called from _get_subindices (caches results for all indices).
-        returns max indexed_date in a (sub)index.
         only takes a few milliseconds.
-        """
-        AGG = "max_indexed_date"
 
+        Returns plain list [max, min, name]: JSONable for caching
+        """
+        AGG_MAX = "max_indexed_date"
+        AGG_MIN = "min_indexed_date"
         search = Search(index=name, using=self._es).extra(size=0) # just aggs
-        search.aggs.bucket(AGG, 'max', field='indexed_date')
-        with self._count_time("get-last-indexed"):
+        search.aggs.bucket(AGG_MAX, 'max', field='indexed_date')
+        search.aggs.bucket(AGG_MIN, 'min', field='indexed_date')
+        with self._count_time("get-indexed-dates"):
             res = search.execute()
         # XXX maybe call _check_response(res)??
-        t = res.aggregations[AGG].value_as_string
-        assert isinstance(t, str)
-        return t[:10]           # YYYY-MM-DD
+        max = res.aggregations[AGG_MAX].value_as_string
+        assert isinstance(max, str)
+        min = res.aggregations[AGG_MIN].value_as_string
+        assert isinstance(min, str)
+        return [max[:DATE_LEN], min[:DATE_LEN], name]
 
     @CachingManager.cache(seconds=15*60)
     def _get_subindices(self, index: str) -> list[list[str]]:
@@ -925,42 +961,54 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # (creation date could be when it was reindexed!)
         res = self._es.indices.get_alias(index=index)
 
-        # plain list of lists, so JSONable.  date first for sorting below
-        subindices = [
-            [self._get_last_indexed(name), name]
-            for name in res.keys()
-        ]
+        # plain list of lists [max, min, name], so JSONable for cache.
+        subindices = [self._get_indexed_dates(name) for name in res.keys()]
 
         # sort in descending order by date of last indexed story
         # should be same as descending sort on name!!!
         subindices.sort(reverse=True)
-        self.trace(Trace.SUBINDICES, "subindices %s", subindices)
+        self.trace(Trace.SUBINDICES, "subindices %r", subindices)
         return subindices
 
-    def _index_from_dates(self, start_date: dt.datetime, end_date: dt.datetime) -> list[str]:
+    def _index_from_dates(self, start_date: dt.date, end_date: dt.date,
+                          indexed_date: bool = False) -> list[str]:
         """
         return list of indices to search for a given date range.
-        if indexing goes back to being split by publication_date (by year or quarter?)
-        this could limit the number of shards that need to be queried
         """
-        if self._use_subindex_list:
-            # expand by a month for: articles accepted in advance,
-            # date truncation in subindices list, subindex overlap
-            start_pub_datetime = start_date - dt.timedelta(days=31)
-            start_pub_date_str = start_pub_datetime.date().isoformat()
+        if not self._use_subindex_list:
+            return [self._index]    # return list with wildcard
 
-            try:
-                ret: list[str] = []
-                for last_indexed, name in self._get_subindices(self._index):
+        # expand by a month for: articles accepted in advance,
+        # date truncation in subindices list, subindex overlap
+        start_date = start_date - dt.timedelta(days=31)
+
+        # works for both date and datetime:
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        try:
+            ret: list[str] = []
+            for last_indexed, first_indexed, name in self._get_subindices(self._index):
+                if start_date_str > last_indexed:
+                    # when searching by published date (the usual case)
                     # quit as soon as next oldest index can't contain anything
-                    if start_pub_date_str > last_indexed:
+                    if not indexed_date:
+                        self.trace(Trace.SUBINDICES, "%s: %r > %r: quitting",
+                                   name, start_date_str, last_indexed)
                         break
-                    ret.append(name)
-                self.trace(Trace.SUBINDICES, "subindex_list %s %r", start_pub_date_str, ret)
-                return ret
-            except (elasticsearch.exceptions.TransportError, elasticsearch.exceptions.ApiError):
-                pass
-        return [self._index]    # return list with wildcard
+                    else:
+                        self.trace(Trace.SUBINDICES, "%r: %r > %r: skipping1",
+                                   name, start_date_str, last_indexed)
+                        continue
+                if indexed_date and first_indexed > end_date_str:
+                    self.trace(Trace.SUBINDICES, "%s: %r > %r: skipping2",
+                               name, first_indexed, end_date_str)
+                    continue
+                ret.append(name)
+                self.trace(Trace.SUBINDICES, "%s added", name)
+            self.trace(Trace.SUBINDICES, "subindex_list %s %s %r", start_date_str, end_date_str, ret)
+            return ret
+        except (elasticsearch.exceptions.TransportError, elasticsearch.exceptions.ApiError):
+            return [self._index]    # return list with wildcard
 
     def _search(self, search: Search, op: str) -> Response:
         """
@@ -995,11 +1043,21 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # them here, but it will require time to acquire the
             # (arcane) knowledge and experience.
             try:
-                for cause in e.body["error"]["root_cause"]:
+                error = e.body["error"]
+                for cause in error["root_cause"]: # [-1]?
                     short = cause["type"]
                     long = cause["reason"]
                     if short == "parse_exception":
                         raise self._parse_exception(long)
+                else:
+                    cb = error.get("caused_by", None)
+                    if cb:
+                        # here with "too_many_buckets_exception" for example
+                        short = cb["type"]
+                        long = cb["reason"]
+                    else:
+                        short = error.get("type", "UNKNOWN")
+                        long = error # ??
             except (LookupError, TypeError):
                 logger.debug("could not get root_cause: %r", e.body)
                 short = str(e)
@@ -1264,7 +1322,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             # generate paging token from all sort keys of last item:
             sort_key_vals = hits[-1].meta.sort
             # indexed_date is nanoseconds, returned as int, but
-            # epoch_nanos not accepted by date parser, so format:
+            # epoch_nanos not accepted by date parser, so format
+            # with only microseconds (which is what is fed in)
             if sort_field == "indexed_date":
                 epoch_nanos = sort_key_vals[0]
                 epoch_secs = epoch_nanos // NS_PER_SEC
@@ -1378,3 +1437,86 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             if (f.include == Include.DEFAULT or
                 (expanded and f.include == Include.EXPANDED))
         ]
+
+    def _es_interval_extras(self, start_date: dt.date,
+                            interval: TwoDAggInterval) -> dict[str, Any]:
+        """
+        return ES extras for week interval
+        based on start day of week
+        """
+        if interval == "week":
+            start_dow = start_date.weekday()
+            if start_dow != 0:
+                # want "-1d" for start_date Sunday(6), "-6d" for Tuesday(1)
+                # both datetime.date and ES use 0 for Monday
+                return {"offset": f"{start_dow - 7}d"}
+        return {}
+
+    @CachingManager.cache()
+    def _two_d_aggregation(self,
+                           *,
+                           start_date: dt.datetime,
+                           end_date: dt.datetime,
+                           interval: TwoDAggInterval | None,
+                           query: str,
+                           inner_field: str,
+                           outer_field: str,
+                           max_inner_buckets: int,
+                           max_outer_buckets: int,
+                           **kwargs: Any) -> TwoDimensionalCounts:
+        # aggregation names:
+        AGG_OUTER = 'outer'
+        AGG_INNER = 'inner'
+
+        indexed_date = outer_field == "indexed_date"
+        search = self._basic_search(query, start_date, end_date,
+                                    indexed_date=indexed_date, **kwargs)\
+                     .extra(size=0) # just aggs
+
+        # convert external bucket names to ES internal field name
+        internal_inner_field = self._ES_FIELDS[inner_field].es_field_name
+        internal_outer_field = self._ES_FIELDS[outer_field].es_field_name
+
+        if outer_field.endswith("_date"): # need better test?
+            assert interval is not None
+            date_extras = self._es_interval_extras(start_date, interval)
+            outer_agg = A("date_histogram",
+                          field=internal_outer_field,
+                          calendar_interval=interval,
+                          **date_extras)
+            # string truncation works for both date and date_nanos fields:
+            outer_key = lambda b: b["key_as_string"][:DATE_LEN]
+        else:
+            outer_agg = A("terms",
+                           field=internal_outer_field,
+                           size=max_outer_buckets)
+            outer_key = lambda b: b["key"]
+
+        # nested buckets!
+        search.aggs.bucket(AGG_OUTER, outer_agg)\
+                   .bucket(AGG_INNER, "terms",
+                           field=internal_inner_field,
+                           size=max_inner_buckets)
+        res = self._search(search, "interval-aggregate")
+        res_buckets = cast(list[dict[str, Any]], res.aggregations[AGG_OUTER])
+        buckets: dict[str, dict[str, int]] = {
+            # key
+            outer_key(outer):
+            # value:
+            {
+                str(b["key"]): int(b["doc_count"])
+                for b in outer[AGG_INNER]["buckets"]
+            }
+            for outer in res_buckets
+        }
+
+        out = TwoDimensionalCounts(
+            buckets = buckets,
+            # save possibly calculated values:
+            max_inner_buckets = max_inner_buckets,
+            max_outer_buckets = max_outer_buckets,
+            start_date = start_date.strftime("%Y-%m-%d"),
+            end_date = end_date.strftime("%Y-%m-%d")
+        )
+        return out
+

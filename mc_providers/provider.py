@@ -8,10 +8,11 @@ import time
 import warnings
 from abc import ABC
 from types import TracebackType
-from typing import Any, Iterable, NoReturn, TypeAlias, TypedDict
+from typing import Any, Iterable, Literal, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
 # PyPI:
+from dateutil.relativedelta import relativedelta
 from sigfig import sigfig
 
 from .exceptions import MissingRequiredValue, QueryingEverythingUnsupportedQuery
@@ -119,6 +120,22 @@ class _Term(TypedDict):
 
 Terms: TypeAlias = list[_Term]
 
+# intervals for 2-D aggregation date (outer) buckets
+TwoDAggInterval: TypeAlias = Literal["day", "month", "week", "year"]
+
+class TwoDimensionalCounts(TypedDict):
+    """
+    return type for a two-dimensional aggregation
+    designed to be agnostic about keys (must both be strings).
+
+    alas, typeddicts can't be subclassed to add methods
+    """
+    buckets: dict[str, dict[str, int]]
+    start_date: str
+    end_date: str
+    max_inner_buckets: int
+    max_outer_buckets: int
+
 class Trace:
     # less noisy things, with lower numbers
     STATS = 5
@@ -196,6 +213,48 @@ class _TimingContext:
             self.provider._timing(self.op, ms)
         self.t0 = -1.0
 
+def delta_from_interval(
+        interval: TwoDAggInterval,
+        num_intervals: int) -> relativedelta:
+    """
+    utility for 2D aggregation utility end_date()
+    """
+    if num_intervals <= 0:
+        raise ValueError("num_intervals must be greater than zero")
+
+    if interval == "day":
+        return relativedelta(days=num_intervals)
+    elif interval == "week":
+        return relativedelta(weeks=num_intervals)
+    elif interval == "month":
+        return relativedelta(months=num_intervals)
+    elif interval == "year":
+        return relativedelta(years=num_intervals)
+    else:
+        raise ValueError(f"unknown interval {interval}")
+
+def make_end_date(start_date: dt.datetime,
+                  interval: TwoDAggInterval,
+                  num_intervals: int) -> dt.datetime:
+    """
+    utility for 2D aggregation
+    """
+    return (start_date +
+            delta_from_interval(interval, num_intervals) -
+            dt.timedelta(days=1))
+
+def make_start_date(
+        end_date: dt.datetime,
+        interval: TwoDAggInterval,
+        num_intervals: int) -> dt.datetime:
+    """
+    utility for 2D aggregation
+    """
+    return (end_date -
+            delta_from_interval(interval, num_intervals) +
+            dt.timedelta(days=1))
+
+
 class ContentProvider(ABC):
     """
     An abstract wrapper to be implemented for each platform we want to preview content from.
@@ -218,6 +277,11 @@ class ContentProvider(ABC):
 
     # TIMEOUT *NOT* defined, uses global DEFAULT_TIMEOUT below
     TRACE = 0
+
+    # for two_d_aggregation: MUST override!
+    MAX_2D_AGG_BUCKETS = 0
+    INNER_2D_AGG_BUCKETS: list[str] = ["published", "indexed", "foo", "bar"]
+    OUTER_2D_AGG_BUCKETS: list[str] = ["foo", "bar"]
 
     _trace = int(os.environ.get("MC_PROVIDERS_TRACE", 0)) # class variable!
 
@@ -429,6 +493,102 @@ class ContentProvider(ABC):
         self.trace(Trace.RESULTS, "_sampled_title_words %r", results)
         return results
 
+    # possibly cached worker function
+    def _two_d_aggregation(self,
+                           *,
+                           start_date: dt.datetime,
+                           end_date: dt.datetime,
+                           interval: TwoDAggInterval | None,
+                           query: str,
+                           inner_field: str,
+                           outer_field: str,
+                           max_inner_buckets: int,
+                           max_outer_buckets: int,
+                           **kwargs: Any) -> TwoDimensionalCounts:
+        raise NotImplementedError("two_d_aggregation not implemented")
+
+    def two_d_aggregation(self,
+                          *,
+                          start_date: dt.datetime | None = None,
+                          end_date: dt.datetime | None = None,
+                          interval: TwoDAggInterval | None = None,
+                          num_intervals: int | None = None,
+                          inner_field: str | None = None,
+                          outer_field: str | None = None,
+                          max_inner_buckets: int | None = None,
+                          max_outer_buckets: int | None = None,
+                          query: str | None = None,
+                          **kwargs: Any) -> TwoDimensionalCounts:
+        """
+        two-dimenstional aggregation
+        created for Media Cloud directory maintenance.
+
+        While great effort has been made to check parameters,
+        this is NOT currently safe/harmless enough to be made fully
+        available via API!!!
+
+        NOTE! All value calculation/defaulting done here: so
+        cached/helper (per provider) function gets full args for hashing.
+        """
+        if inner_field is None:
+            inner_field = self.INNER_2D_AGG_BUCKETS[0]
+        elif inner_field not in self.INNER_2D_AGG_BUCKETS:
+            raise ValueError(f"{inner_field} not valid for inner_field")
+
+        if outer_field is None:
+            outer_field = self.OUTER_2D_AGG_BUCKETS[0]
+        elif outer_field not in self.OUTER_2D_AGG_BUCKETS:
+            raise ValueError(f"{outer_field} not valid for outer_field")
+
+        if inner_field == outer_field:
+            raise ValueError("inner_field == outer_field")
+
+        if outer_field.endswith("_date"): # XXX need better test?
+            if interval is None:
+                raise ValueError("interval required")
+            if num_intervals is None:
+                raise ValueError("num_intervals required")
+            if num_intervals <= 0:
+                raise ValueError("num_intervals <= 0")
+            if start_date is None and end_date is None:
+                raise ValueError("need start_date or end_date")
+            elif start_date and end_date:
+                raise ValueError("need only one of start_date or end_date")
+            elif start_date:
+                end_date = make_end_date(start_date, interval, num_intervals)
+            else:
+                assert end_date is not None
+                start_date = make_start_date(end_date, interval, num_intervals)
+            if max_outer_buckets is not None:
+                raise ValueError("max_outer_buckets with num_intervals")
+            max_outer_buckets = num_intervals
+            max_inner_buckets = self.MAX_2D_AGG_BUCKETS // max_outer_buckets
+        else:                   # outer_field not timestamp
+            if max_inner_buckets is None:
+                if max_outer_buckets is None:
+                    raise ValueError("need one of {min,max}_inner_buckets")
+                max_inner_buckets = self.MAX_2D_AGG_BUCKETS // max_outer_buckets
+            elif max_outer_buckets is None:
+                max_outer_buckets = self.MAX_2D_AGG_BUCKETS // max_inner_buckets
+
+        if not query:
+            query = self.everything_query() # typical case
+
+        assert start_date
+        assert end_date
+        assert max_inner_buckets
+        assert max_outer_buckets
+        # call possibly cached helper function with full set of args
+        res = self._two_d_aggregation(start_date=start_date,
+                                      end_date=end_date,
+                                      interval=interval,
+                                      inner_field=inner_field,
+                                      outer_field=outer_field,
+                                      max_inner_buckets=max_inner_buckets,
+                                      max_outer_buckets=max_outer_buckets,
+                                      query=query, **kwargs)
+        return res
+
     # from story-indexer/indexer/story.py:
     # https://stackoverflow.com/questions/1175208/elegant-python-function-to-convert-camelcase-to-snake-case
     @classmethod
@@ -577,6 +737,7 @@ class ContentProvider(ABC):
             self._statsd_client.timing("all", ms)
             if self._time_by_op:
                 self._statsd_client.timing(f"query.op_{op}", ms)
+
 
 # used in normalized_count_over_time
 def _combined_split_and_normalized_counts(matching_results: list[_DateCount], total_results: list[_DateCount]) -> list[_CombinedDateInfo]:
