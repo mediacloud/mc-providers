@@ -17,6 +17,7 @@ Releases > 4.0.0 will all be shared exclusively on github, and this project will
 4. A github action will build and push the repository on committing a tagged version
 
 ### Version History
+* __v4.3.0__ - Add two_d_aggregation method (implemented for OnlineNewsMediaCloudProvider)
 * __v4.2.0__ - Upgrade ES provider for new MC cluster rollout
 * __v4.1.1__ - Add RAW_QUERY trace for introspecting ES payloads directly
 * __v4.1.0__ - Impovements to random_sample method, cleanup of vestigial new-search-api related code
