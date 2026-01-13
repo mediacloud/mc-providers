@@ -838,14 +838,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         for domain in domains:
             selectors.append(Q("match", canonical_domain=domain)) # allows space sep words?
         uss = kwargs.get("url_search_strings", {})
-
-        # ignore uss key (domain):
-        for strings in uss.values():
+        for domain, strings in uss.items():
+            wildcards = []
             for string in strings:
                 if not string.endswith("*"):
                     string += "*"
-                selectors.append(Q("wildcard", url=f"http://{string}"))
-                selectors.append(Q("wildcard", url=f"https://{string}"))
+                wildcards.append(Q("wildcard", url=f"http://{string}"))
+                wildcards.append(Q("wildcard", url=f"https://{string}"))
+            selectors.append(Bool(must=[Q("match", canonical_domain=domain),
+                                        Bool(should=wildcards)]))
         if selectors:
             return FilterTuple(len(selectors) * cls.SELECTOR_WEIGHT,
                                Bool(should=selectors)) # OR'ed
