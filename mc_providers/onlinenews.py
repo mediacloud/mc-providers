@@ -404,7 +404,9 @@ from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.aggs import A
 from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
-from elasticsearch_dsl.query import Bool, FunctionScore, Match, Range, Q, Query, QueryString
+from elasticsearch_dsl.query import (
+    Bool, FunctionScore, Match, Wildcard, Range, Query, QueryString
+)
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
@@ -836,20 +838,31 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         selectors: list[Query] = []
         domains = kwargs.get("domains", [])
         for domain in domains:
-            selectors.append(Q("match", canonical_domain=domain)) # allows space sep words?
+            selectors.append(Match(canonical_domain=domain))
         uss = kwargs.get("url_search_strings", {})
+
+        def dsl_and(*x: Query) -> Query:
+            return Bool(must=x)
+
+        def dsl_or_list(l: list[Query]) -> Query:
+            return Bool(should=l)
+
         for domain, strings in uss.items():
-            wildcards = []
+            wildcards: list[Query] = []
             for string in strings:
                 if not string.endswith("*"):
                     string += "*"
-                wildcards.append(Q("wildcard", url=f"http://{string}"))
-                wildcards.append(Q("wildcard", url=f"https://{string}"))
-            selectors.append(Bool(must=[Q("match", canonical_domain=domain),
-                                        Bool(should=wildcards)]))
+                wildcards.append(Wildcard(url=f"http://{string}"))
+                wildcards.append(Wildcard(url=f"https://{string}"))
+            selectors.append(
+                dsl_and(
+                    Match(canonical_domain=domain),
+                    dsl_or_list(wildcards)))
+
         if selectors:
-            return FilterTuple(len(selectors) * cls.SELECTOR_WEIGHT,
-                               Bool(should=selectors)) # OR'ed
+            return FilterTuple(
+                len(selectors) * cls.SELECTOR_WEIGHT,
+                dsl_or_list(selectors))
         else:
             # return dummy record, will be weeded out
             return FilterTuple(0, None)
