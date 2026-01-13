@@ -404,7 +404,7 @@ from elasticsearch_dsl import Search, Response
 from elasticsearch_dsl.aggs import A
 from elasticsearch_dsl.document_base import InstrumentedField
 from elasticsearch_dsl.function import RandomScore
-from elasticsearch_dsl.query import FunctionScore, Match, Range, Query, QueryString
+from elasticsearch_dsl.query import Bool, FunctionScore, Match, Range, Q, Query, QueryString
 from elasticsearch_dsl.response import Hit
 from elasticsearch_dsl.utils import AttrDict
 
@@ -833,19 +833,22 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         function to allow construction of DSL
         """
 
-        # rather than restorting to formatting/quoting query-string
-        # only to have ES have to parse it:
-        # For canonical_domain: "Match" query defaults to OR for space separated words
-        # For url: use "Wildcard"??
-        # Should initially take (another) temp kwarg bool to allow A/B testing!!!
-        # elasticsearch_dsl allows "Query | Query"
+        selectors: list[Query] = []
+        domains = kwargs.get("domains", [])
+        for domain in domains:
+            selectors.append(Q("match", canonical_domain=domain)) # allows space sep words?
+        uss = kwargs.get("url_search_strings", {})
 
-        selector_clauses = cls._selector_query_clauses(kwargs)
-        if selector_clauses:
-            sqs = cls._selector_query_string_from_clauses(selector_clauses)
-            return FilterTuple(cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
-                               SanitizedQueryString(query=sqs,
-                                                    allow_leading_wildcard=True))
+        # ignore uss key (domain):
+        for strings in uss.values():
+            for string in strings:
+                if not string.endswith("*"):
+                    string += "*"
+                selectors.append(Q("wildcard", url=f"http://{string}"))
+                selectors.append(Q("wildcard", url=f"https://{string}"))
+        if selectors:
+            return FilterTuple(len(selectors) * cls.SELECTOR_WEIGHT,
+                               Bool(should=selectors)) # OR'ed
         else:
             # return dummy record, will be weeded out
             return FilterTuple(0, None)
