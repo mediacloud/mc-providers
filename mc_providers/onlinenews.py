@@ -88,7 +88,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
                     domain_queries = [cls._assembled_query_str(base_query, domains=dom) for dom in chunked_domains]
                     domain_queries_too_big = any([len(q_) > cls.MAX_QUERY_LENGTH for q_ in domain_queries])
                     domain_divisor *= 2
-                
+
         # Then Get Filter Queries
         filter_queries = []
         if len(filters) > 0:
@@ -124,6 +124,7 @@ class OnlineNewsAbstractProvider(ContentProvider):
         kwargs.pop("filters", None) # Iterable[str]
         kwargs.pop("url_search_strings", None) # dict[str, Iterable[str]]
         kwargs.pop("url_search_string_domain", None) # bool: TEMP
+        kwargs.pop("query_string_filter", None)      # bool: TEMP
 
     @classmethod
     def _check_kwargs(cls, kwargs: dict[str, Any]) -> None:
@@ -830,17 +831,45 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
     DAY_WEIGHT = 1
 
     @classmethod
+    def _old_selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
+        """
+        TEMPORARY: old version constructing query string for domains
+        function to allow construction of DSL
+        """
+
+        # rather than restorting to formatting/quoting query-string
+        # only to have ES have to parse it:
+        # For canonical_domain: "Match" query defaults to OR for space separated words
+        # For url: use "Wildcard"??
+        # Should initially take (another) temp kwarg bool to allow A/B testing!!!
+        # elasticsearch_dsl allows "Query | Query"
+
+        selector_clauses = cls._selector_query_clauses(kwargs)
+        if selector_clauses:
+            sqs = cls._selector_query_string_from_clauses(selector_clauses)
+            return FilterTuple(cls._selector_count(kwargs) * cls.SELECTOR_WEIGHT,
+                               SanitizedQueryString(query=sqs,
+                                                    allow_leading_wildcard=True))
+        else:
+            # return dummy record, will be weeded out
+            return FilterTuple(0, None)
+
+    @classmethod
     def _selector_filter_tuple(cls, kwargs: dict) -> FilterTuple:
         """
         function to allow construction of DSL
         """
 
+        if kwargs.get("query_string_filter", False):
+            # escape hatch to query string based source filter
+            return cls._old_selector_filter_tuple(kwargs)
+
         selectors: list[Query] = []
         domains = kwargs.get("domains", [])
         for domain in domains:
             selectors.append(Match(canonical_domain=domain))
-        uss = kwargs.get("url_search_strings", {})
 
+        uss = kwargs.get("url_search_strings", {})
         for domain, strings in uss.items():
             wildcards: list[Query] = []
             for string in strings:
@@ -848,16 +877,25 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                     string += "*"
                 wildcards.append(Wildcard(url=f"http://{string}"))
                 wildcards.append(Wildcard(url=f"https://{string}"))
+            # In Bool query with "must" clause minimum_should_match
+            # defaults to zero so need to set it to one to force
+            # matching wildcards
             selectors.append(
                 Bool(must=[Match(canonical_domain=domain)],
                      should=wildcards,
-                     minimum_should_match=1) # must match at least 1 wildcard
+                     minimum_should_match=1)
             )
 
         if selectors:
-            return FilterTuple(
-                len(selectors) * cls.SELECTOR_WEIGHT,
-                Bool(should=selectors)) # OR'ed together
+            if len(selectors) == 1:
+                # uncommon case of just one selector
+                filter = selectors[0]
+            else:
+                # Bool with only a "should" clause Bool defaults
+                # to minimum_should_match=1
+                filter = Bool(should=selectors) # OR'ed together
+                
+            return FilterTuple(len(selectors) * cls.SELECTOR_WEIGHT, filter)
         else:
             # return dummy record, will be weeded out
             return FilterTuple(0, None)
