@@ -894,7 +894,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 # Bool with only a "should" clause Bool defaults
                 # to minimum_should_match=1
                 filter = Bool(should=selectors) # OR'ed together
-                
             return FilterTuple(len(selectors) * cls.SELECTOR_WEIGHT, filter)
         else:
             # return dummy record, will be weeded out
