@@ -841,12 +841,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             selectors.append(Match(canonical_domain=domain))
         uss = kwargs.get("url_search_strings", {})
 
-        def dsl_and(*x: Query) -> Query:
-            return Bool(must=x)
-
-        def dsl_or_list(l: list[Query]) -> Query:
-            return Bool(should=l)
-
         for domain, strings in uss.items():
             wildcards: list[Query] = []
             for string in strings:
@@ -855,14 +849,15 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                 wildcards.append(Wildcard(url=f"http://{string}"))
                 wildcards.append(Wildcard(url=f"https://{string}"))
             selectors.append(
-                dsl_and(
-                    Match(canonical_domain=domain),
-                    dsl_or_list(wildcards)))
+                Bool(must=[Match(canonical_domain=domain)],
+                     should=wildcards,
+                     minimum_should_match=1) # must match at least 1 wildcard
+            )
 
         if selectors:
             return FilterTuple(
                 len(selectors) * cls.SELECTOR_WEIGHT,
-                dsl_or_list(selectors))
+                Bool(should=selectors)) # OR'ed together
         else:
             # return dummy record, will be weeded out
             return FilterTuple(0, None)
