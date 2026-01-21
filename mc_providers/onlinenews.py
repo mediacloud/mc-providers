@@ -1546,7 +1546,7 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                    .bucket(AGG_INNER, "terms",
                            field=internal_inner_field,
                            size=max_inner_buckets)
-        res = self._search(search, "interval-aggregate")
+        res = self._search(search, "2d-aggregate")
         res_buckets = cast(list[dict[str, Any]], res.aggregations[AGG_OUTER])
         buckets: dict[str, dict[str, int]] = {
             # key
