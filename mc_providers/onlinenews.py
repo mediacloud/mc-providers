@@ -886,18 +886,18 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                      minimum_should_match=1)
             )
 
-        if selectors:
-            if len(selectors) == 1:
-                # uncommon case of just one selector
-                filter = selectors[0]
-            else:
-                # Bool with only a "should" clause Bool defaults
-                # to minimum_should_match=1
-                filter = Bool(should=selectors) # OR'ed together
-            return FilterTuple(len(selectors) * cls.SELECTOR_WEIGHT, filter)
-        else:
+        nsel = len(selectors)
+        if nsel == 0:
             # return dummy record, will be weeded out
             return FilterTuple(0, None)
+        elif nsel == 1:
+            # uncommon case of just one selector
+            filter = selectors[0]
+        else:
+            # Bool with only a "should" clause Bool defaults
+            # to minimum_should_match=1
+            filter = Bool(should=selectors) # OR'ed together
+        return FilterTuple(nsel * cls.SELECTOR_WEIGHT, filter)
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
                       expanded: bool = False, source: bool = True,
