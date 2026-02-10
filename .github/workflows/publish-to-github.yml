@@ -124,6 +124,7 @@ jobs:
         run: |
           git fetch --all --tags
           git tag -f "${{ steps.extract.outputs.minor }}" "${GITHUB_SHA}"
+          git push --delete origin "${{ steps.extract.outputs.minor }}" || true
           git push --force origin "${{ steps.extract.outputs.minor }}"
 
       - name: Update or Create Minor Release

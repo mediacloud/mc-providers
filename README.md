@@ -16,7 +16,8 @@ Releases > 4.0.0 will all be shared exclusively on github, and this project will
 3. Commit the changes and tag it with a semantic version number
 4. A github action will build and push the repository on committing a tagged version
 
-### Version History
+### Version Histor
+* __v4.3.1__ - Updated selector logic for domains and url search strings, and added Vietnamese stop-words
 * __v4.3.0__ - Add two_d_aggregation method (implemented for OnlineNewsMediaCloudProvider)
 * __v4.2.0__ - Upgrade ES provider for new MC cluster rollout
 * __v4.1.1__ - Add RAW_QUERY trace for introspecting ES payloads directly
