@@ -122,10 +122,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git fetch --all --tags
+          git fetch origin --tags
           git tag -f "${{ steps.extract.outputs.minor }}" "${GITHUB_SHA}"
           git push --delete origin "${{ steps.extract.outputs.minor }}" || true
-          git push --force origin "${{ steps.extract.outputs.minor }}"
+          git push --force origin "refs/tags/${{ steps.extract.outputs.minor }}"
 
       - name: Update or Create Minor Release
         env:
