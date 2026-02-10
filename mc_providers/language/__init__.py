@@ -75,8 +75,9 @@ def terms_without_stopwords(lang_code: str, text: str) -> List[str]:
 def terms_without_stopwords_list(lang_code: str, texts: list[str],
                                  min_word_length: int = _MIN_WORD_LENGTH) -> List[List[str]]:
     """
-    take list of documents, return list of token lists
-    (for both total term counts and per-document counts)
+    Take list of documents, return list of token lists (for both total term counts and per-document counts).
+    Note: this an intentionally naive implementation in order to provide OK results without the burden
+    of installing a NLP model for _every_ language that can correctly tokenize and handle multi-word tokens.
     """
     try:
         lang_stopwords = stopwords_for_language(lang_code)
