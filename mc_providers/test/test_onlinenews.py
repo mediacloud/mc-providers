@@ -697,3 +697,33 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         assert "2023-10-01" not in b # before new system started!
         assert b["2023-11-01"]["nytimes.com"] > 2300
         assert b["2023-12-01"]["nytimes.com"] > 4200
+
+    def test_url_search_strings(self):
+        """
+        test URL search string filtering
+        """
+
+        uss = {
+            'bizjournals.com': [
+                'www.bizjournals.com/stlouis/*', # 4
+                'www.bizjournals.com/boston/*', # 2
+                'www.bizjournals.com/columbus/*', # 2
+                'www.bizjournals.com/charlotte/*' # 4
+            ]
+        }
+
+        start_date = dt.datetime(2023, 1, 1)
+        end_date = dt.datetime(2023, 3, 31)
+
+        # generating DSL:
+        c1 = self._provider.count("*", start_date, end_date,
+                                 url_search_strings=uss)
+        assert c1 == 12
+
+        # old way with query_string:
+        c2 = self._provider.count("*", start_date, end_date,
+                                  url_search_strings=uss,
+                                  query_string_filter=True,
+                                  )
+        assert c1 == c2
+
