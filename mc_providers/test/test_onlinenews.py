@@ -692,7 +692,6 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
                                              # default inner field (domain)
                                              max_inner_buckets=3,
                                              domains=["nytimes.com"])
-        print(r)
         b = r["buckets"]
         assert "2023-10-01" not in b # before new system started!
         assert b["2023-11-01"]["nytimes.com"] > 2300
@@ -727,3 +726,56 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
                                   )
         assert c1 == c2
 
+    # one hit in 13 articles for "conan"
+    FUZZY_ONE_EDIT = "connan~"  # should match with one edit
+    FUZZY_START = dt.datetime(2026, 3, 19)
+    FUZZY_END = FUZZY_START
+    FUZZY_DOMAINS = ["berkeleybeacon.com"]
+
+    def test_fuzziness_0(self):
+        """
+        default is fuzziness disabled, should match none
+        """
+        result = self._provider.count(self.FUZZY_ONE_EDIT,
+                                      self.FUZZY_START,
+                                      self.FUZZY_END,
+                                      domains=self.FUZZY_DOMAINS,
+                                      )
+        assert result == 0
+
+    def test_fuzziness_1(self):
+        """
+        allow one edit, should match
+        """
+        result = self._provider.count(self.FUZZY_ONE_EDIT,
+                                      self.FUZZY_START,
+                                      self.FUZZY_END,
+                                      domains=self.FUZZY_DOMAINS,
+                                      fuzziness=1, # allow one edit
+                                      )
+        assert result > 0
+
+    def test_fuzziness_1b(self):
+        """
+        one edit should NOT match
+        """
+        result = self._provider.count("x" + self.FUZZY_ONE_EDIT,
+                                      self.FUZZY_START,
+                                      self.FUZZY_END,
+                                      domains=self.FUZZY_DOMAINS,
+                                      fuzziness=1, # allow one edit
+                                      )
+        assert result == 0
+
+    def test_fuzziness_zauto(self):
+        """
+        try setting fuzziness w/ auto-length (based on token length),
+        which is the ES default (just to see it enables fuzziness)
+        """
+        result = self._provider.count(self.FUZZY_ONE_EDIT,
+                                      self.FUZZY_START,
+                                      self.FUZZY_END,
+                                      domains=self.FUZZY_DOMAINS,
+                                      fuzziness="AUTO"
+                                      )
+        assert result > 0
