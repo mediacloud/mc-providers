@@ -779,3 +779,15 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
                                       fuzziness="AUTO"
                                       )
         assert result > 0
+
+    def test_fuzziness_proximity(self):
+        """
+        test that proximity matching still works!!
+        """
+        result = self._provider.count('"conan oscars"~10',
+                                      self.FUZZY_START,
+                                      self.FUZZY_END,
+                                      domains=self.FUZZY_DOMAINS,
+                                      fuzziness="AUTO"
+                                      )
+        assert result > 0
