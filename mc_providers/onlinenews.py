@@ -901,10 +901,14 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
     def _basic_search(self, user_query: str, start_date: dt.datetime, end_date: dt.datetime,
                       expanded: bool = False, source: bool = True,
-                      indexed_date: bool = False, **kwargs: Any) -> Search:
+                      indexed_date: bool = False, fuzziness: int | str = 0,
+                      **kwargs: Any) -> Search:
         """
         from news-search-api/api.py cs_basic_query
         create a elasticsearch_dsl query from user_query, date range, and kwargs
+
+        Default ES fuzziness is "AUTO":
+        https://www.elastic.co/docs/reference/elasticsearch/rest-apis/common-options#fuzziness
         """
         # works for date or datetime! publication_date is just YYYY-MM-DD
         start = start_date.strftime("%Y-%m-%d")
@@ -925,7 +929,11 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             s = s.extra(profile=True)
 
         if user_query.strip() != self.everything_query(): # not "*"?
-            s = s.query(SanitizedQueryString(query=user_query, default_field="text_content", default_operator="and"))
+            s = s.query(
+                SanitizedQueryString(query=user_query,
+                                     default_field="text_content",
+                                     default_operator="and",
+                                     fuzziness=fuzziness))
 
         if self._session_id:
             # pass user-id and/or session
