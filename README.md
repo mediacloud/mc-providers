@@ -15,8 +15,10 @@ Releases > 4.0.0 will all be shared exclusively on github, and this project will
 2. Add a note about changes to the version history below
 3. Commit the changes and tag it with a semantic version number
 4. A github action will build and push the repository on committing a tagged version
+   (automatically adds a vM.m.latest tag, used by mediacloud/web-search!!)
 
-### Version Histor
+### Version History
+* __v4.4.0__ - Default ES max "fuzziness" (word edit distance) to zero for womrd~
 * __v4.3.1__ - Updated selector logic for domains and url search strings, and added Vietnamese stop-words
 * __v4.3.0__ - Add two_d_aggregation method (implemented for OnlineNewsMediaCloudProvider)
 * __v4.2.0__ - Upgrade ES provider for new MC cluster rollout
