@@ -31,7 +31,7 @@ dependencies = [
     "wayback-news-search == 1.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata >= 1.4.0",
-    "mediacloud >= 5.*",
+    "mediacloud >= 5",
     "elasticsearch == 8.17.*", # keep in sync w/ ES major version?
     "elasticsearch-dsl == 8.17.*", # keep in sync w/ ES major version!
     "sigfig == 1.1.*",
