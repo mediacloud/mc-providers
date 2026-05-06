@@ -31,7 +31,6 @@ dependencies = [
     "wayback-news-search == 1.*",
     "fasttext == 0.9.*",
     "mediacloud-metadata >= 1.4.0",
-    "mediacloud >= 5",
     "elasticsearch == 8.17.*", # keep in sync w/ ES major version?
     "elasticsearch-dsl == 8.17.*", # keep in sync w/ ES major version!
     "sigfig == 1.1.*",
@@ -48,7 +47,8 @@ dev = [
 test = [
     "psutil", # for tests
     "python-dotenv",
-    "pytest"
+    "pytest",
+    "mediacloud==5.0.0",
 ]
 
 # dependencies for mypy (not in user venv):
