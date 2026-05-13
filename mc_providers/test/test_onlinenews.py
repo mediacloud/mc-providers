@@ -318,7 +318,7 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         # a VPN tunnel open to the Media Cloud production ES
         # with "export ONLINE_NEWS_MEDIA_CLOUD_ES_PROVIDER_BASE_URL=http://localhost:9200"
         self._provider = provider_for(PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD,
-                                      software_id=__name__, session_id=os.environ.get("USER", "test-user"))
+                                      software_id=__name__, session_id=os.environ.get("USER", "test-user"), base_url='http://localhost:9200')
 
     # moved here 2025-03-18: no longer supported in Wayback Provider
     @pytest.mark.filterwarnings("ignore:.*significant figures.*:UserWarning")
@@ -512,6 +512,64 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         self._test_random_sample(["id", "indexed_date", "language",
                                   "media_name", "media_url", "publish_date",
                                   "text", "title", "url"], page_size=2)
+
+    def test_paged_random_sample_no_overlap(self):
+        """Four consecutive pages share no document IDs."""
+        query = "biden"
+        start_date = dt.datetime(2020, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        fields = ["id", "title", "language", "media_name", "publish_date", "url", "language"]
+        page_size = 1000
+
+        all_ids: list[str] = []
+        token = None
+        for _ in range(10):
+            page, token = self._provider.paged_random_sample(
+                query, start_date, end_date,
+                page_size=page_size, fields=fields, pagination_token=token
+            )
+            assert len(page) == page_size
+            page_ids = [item["id"] for item in page]
+            assert not set(page_ids) & set(all_ids), "duplicate IDs found across pages"
+            all_ids.extend(page_ids)
+            assert token is not None
+
+    def test_paged_random_sample_reproducible(self):
+        """The same seed produces the same first page."""
+        query = "biden"
+        start_date = dt.datetime(2020, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        fields = ["id"]
+        page_size = 50
+        seed = 12345
+
+        page1, _ = self._provider.paged_random_sample(
+            query, start_date, end_date,
+            page_size=page_size, fields=fields, seed=seed
+        )
+        page2, _ = self._provider.paged_random_sample(
+            query, start_date, end_date,
+            page_size=page_size, fields=fields, seed=seed
+        )
+        assert [item["id"] for item in page1] == [item["id"] for item in page2]
+
+    def test_paged_random_sample_different_seeds(self):
+        """Different seeds produce different orderings."""
+        query = "biden"
+        start_date = dt.datetime(2020, 1, 1)
+        end_date = dt.datetime(2023, 12, 1)
+        fields = ["id"]
+        page_size = 100
+
+        page1, _ = self._provider.paged_random_sample(
+            query, start_date, end_date,
+            page_size=page_size, fields=fields, seed=1
+        )
+        page2, _ = self._provider.paged_random_sample(
+            query, start_date, end_date,
+            page_size=page_size, fields=fields, seed=2
+        )
+        assert [item["id"] for item in page1] != [item["id"] for item in page2]
 
     @staticmethod
     def inner_keys(tdc) -> set[str]:

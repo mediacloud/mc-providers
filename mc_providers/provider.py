@@ -376,11 +376,14 @@ class ContentProvider(ABC):
 
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                       page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
-        # NOTE! same type signature as all_items (plus fields)
-        # Could be subsumed by passing keyword arguments (fields, randomize) to all_items?!
-        # A paged_ version would be needed for to expose a web-search API call
-        # (which would require a "seed" value to generate a consistent sequence)
         raise NotImplementedError("Doesn't support fetching random sample.")
+
+    def paged_random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
+                            page_size: int, fields: list[str], **kwargs: Any) -> tuple[list[dict], str | None]:
+        # kwargs may include: pagination_token (str | None), seed (int)
+        # This is implemented as a separate endpoint because it can be expensive to run on servers, so we
+        # want to be thoughtful about how / if we support it for external users
+        raise NotImplementedError("Doesn't support paginated random sample.")
 
     @classmethod
     def fields(cls, expanded: bool = False) -> list[str]:
