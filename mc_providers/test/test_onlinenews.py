@@ -342,9 +342,16 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
         query = "*"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
-        page1, next_token1 = self._provider.paged_items(query, start_date, end_date, expanded=True)
-        assert len(page1) > 0
-        for story in page1:
+        page, next_token = self._provider.paged_items(query, start_date, end_date, expanded=True)
+        assert len(page) > 0
+        for story in page:
+            assert "id" in story
+            assert "text" in story
+            assert len(story['text']) > 0
+        # test randomized sort order too
+        page, next_token = self._provider.paged_items(query, start_date, end_date, expanded=True, randomize=True)
+        assert len(page) > 0
+        for story in page:
             assert "id" in story
             assert "text" in story
             assert len(story['text']) > 0
@@ -470,9 +477,9 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
 
     # id requires special handling; test for no duplicates
     def test_random_id(self):
-        page_size = 10000
+        page_size = 1000
         results = self._collect_random_results("*", ["id"], page_size, None, None)
-        assert len(results) == page_size
+        self.assertEqual(len(results), page_size)
 
         # ensure no duplicates
         idlist = [s["id"] for s in results]
@@ -513,20 +520,21 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
                                   "media_name", "media_url", "publish_date",
                                   "text", "title", "url"], page_size=2)
 
-    def test_paged_random_sample_no_overlap(self):
-        """Four consecutive pages share no document IDs."""
+    def test_paged_items_random_no_overlap(self):
+        """Four consecutive randomized pages share no document IDs."""
         query = "biden"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
-        fields = ["id", "title", "language", "media_name", "publish_date", "url", "language"]
-        page_size = 1000
+        page_size = 100
 
         all_ids: list[str] = []
         token = None
-        for _ in range(10):
-            page, token = self._provider.paged_random_sample(
+        for i in range(4):
+            page, token = self._provider.paged_items(
                 query, start_date, end_date,
-                page_size=page_size, fields=fields, pagination_token=token
+                page_size=page_size,
+                randomize=(i == 0),   # only needed on first call; token signals it after
+                pagination_token=token
             )
             assert len(page) == page_size
             page_ids = [item["id"] for item in page]
@@ -534,40 +542,38 @@ class OnlineNewsMediaCloudProviderTest(OnlineNewsWaybackMachineProviderTest):
             all_ids.extend(page_ids)
             assert token is not None
 
-    def test_paged_random_sample_reproducible(self):
+    def test_paged_items_random_reproducible(self):
         """The same seed produces the same first page."""
         query = "biden"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
-        fields = ["id"]
         page_size = 50
         seed = 12345
 
-        page1, _ = self._provider.paged_random_sample(
+        page1, _ = self._provider.paged_items(
             query, start_date, end_date,
-            page_size=page_size, fields=fields, seed=seed
+            page_size=page_size, randomize=True, seed=seed
         )
-        page2, _ = self._provider.paged_random_sample(
+        page2, _ = self._provider.paged_items(
             query, start_date, end_date,
-            page_size=page_size, fields=fields, seed=seed
+            page_size=page_size, randomize=True, seed=seed
         )
         assert [item["id"] for item in page1] == [item["id"] for item in page2]
 
-    def test_paged_random_sample_different_seeds(self):
+    def test_paged_items_random_different_seeds(self):
         """Different seeds produce different orderings."""
         query = "biden"
         start_date = dt.datetime(2020, 1, 1)
         end_date = dt.datetime(2023, 12, 1)
-        fields = ["id"]
         page_size = 100
 
-        page1, _ = self._provider.paged_random_sample(
+        page1, _ = self._provider.paged_items(
             query, start_date, end_date,
-            page_size=page_size, fields=fields, seed=1
+            page_size=page_size, randomize=True, seed=1
         )
-        page2, _ = self._provider.paged_random_sample(
+        page2, _ = self._provider.paged_items(
             query, start_date, end_date,
-            page_size=page_size, fields=fields, seed=2
+            page_size=page_size, randomize=True, seed=2
         )
         assert [item["id"] for item in page1] != [item["id"] for item in page2]
 

@@ -378,13 +378,6 @@ class ContentProvider(ABC):
                       page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
         raise NotImplementedError("Doesn't support fetching random sample.")
 
-    def paged_random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                            page_size: int, fields: list[str], **kwargs: Any) -> tuple[list[dict], str | None]:
-        # kwargs may include: pagination_token (str | None), seed (int)
-        # This is implemented as a separate endpoint because it can be expensive to run on servers, so we
-        # want to be thoughtful about how / if we support it for external users
-        raise NotImplementedError("Doesn't support paginated random sample.")
-
     @classmethod
     def fields(cls, expanded: bool = False) -> list[str]:
         """

@@ -1325,7 +1325,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         Pass `None` as first `pagination_token`, after that pass
         value returned by previous call, until `None` returned.
 
-        `kwargs` may contain: `sort_field` (str), `sort_order` (str), `expanded` (bool)
+        `kwargs` may contain: `sort_field` (str), `sort_order` (str), `expanded` (bool),
+        `randomize` (bool), `seed` (int)
+
+        When `randomize=True` the results are returned in a deterministic random order
+        stable across pages for a given seed.  The seed is embedded in the returned
+        token so subsequent calls do not need to re-supply `randomize` or `seed`.
+
+        WARNING: randomized pagination re-scores ALL matching documents on every
+        request (O(N) per page where N = matching doc count).  Keep the number of
+        pages fetched small and prefer large page_size values.
         """
         logger.debug("MC._paged_items q: %s: %s e: %s ps: %d",
                      query, start_date, end_date, page_size)
@@ -1336,37 +1345,52 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         sort_field = kwargs.pop("sort_field", _DEF_SORT_FIELD)
         sort_order = kwargs.pop("sort_order", _DEF_SORT_ORDER)
         pagination_token = kwargs.pop("pagination_token", None)
+        randomize = kwargs.pop("randomize", False)
+        seed_arg = kwargs.pop("seed", None)
 
-        # NOTE! depends on client limiting to reasonable choices!!
-        # (full text might leak data, or causes memory exhaustion!)
-        # originally took internal sort_field names only, now accept
-        # both, prefering to intrepret as external first
-        # (the default indexed_date name is same inside and out)
-        sf = self._ES_FIELDS.get(sort_field)
-        if sf and not sf.metadata:
-            sort_field = sf.es_field_name
-        if sort_field not in self._fields(expanded):
-            raise ValueError(sort_field)
-        if sort_order not in ["asc", "desc"]:
-            raise ValueError(sort_order)
+        # Decode token; a 3-part token signals randomized pagination (seed is last).
+        # important to use `search_after` instead of 'from' for memory reasons
+        # related to paging through more than 10k results.
+        after: list | None = None
+        seed: int | None = None
+        if pagination_token:
+            parts = _b64_decode_page_token(pagination_token).split(_SORT_KEY_SEP)
+            if len(parts) == 3:  # random token: [score, _doc, seed]
+                randomize = True
+                after = [float(parts[0]), int(parts[1])]
+                seed = int(parts[2])
+            else:               # regular token: two sort-key values
+                after = parts
 
-        # see discussion above at _SECONDARY_SORT_ARGS declaration
-        sort_opts = [
-            {sort_field: sort_order},
-            _SECONDARY_SORT_ARGS
-        ]
+        if randomize:
+            if seed is None:
+                seed = seed_arg if seed_arg is not None else random.randint(0, 2**31 - 1)
+        else:
+            # NOTE! depends on client limiting to reasonable choices!!
+            # (full text might leak data, or causes memory exhaustion!)
+            # originally took internal sort_field names only, now accept
+            # both, prefering to intrepret as external first
+            # (the default indexed_date name is same inside and out)
+            sf = self._ES_FIELDS.get(sort_field)
+            if sf and not sf.metadata:
+                sort_field = sf.es_field_name
+            if sort_field not in self._fields(expanded):
+                raise ValueError(sort_field)
+            if sort_order not in ["asc", "desc"]:
+                raise ValueError(sort_order)
 
         search = self._basic_search(query, start_date, end_date, expanded=expanded, **kwargs)\
-                     .extra(size=page_size)\
-                     .sort(*sort_opts)
+                     .extra(size=page_size)
 
-        if pagination_token:
-            # may return multiple keys:
-            after = _b64_decode_page_token(pagination_token).split(_SORT_KEY_SEP)
+        if randomize:
+            search = search\
+                .query(FunctionScore(functions=[RandomScore(seed=seed, field="_seq_no")]))\
+                .sort({"_score": "desc"}, _SECONDARY_SORT_ARGS)
+        else:
+            # see discussion above at _SECONDARY_SORT_ARGS declaration
+            search = search.sort(*[{sort_field: sort_order}, _SECONDARY_SORT_ARGS])
 
-            # important to use `search_after` instead of 'from' for
-            # memory reasons related to paging through more than 10k
-            # results.
+        if after is not None:
             search = search.extra(search_after=after)
 
         hits = self._search_hits(search, "paged-items")
@@ -1375,20 +1399,26 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         new_pt: str | None = None
         if len(hits) == page_size:
-            # generate paging token from all sort keys of last item:
-            sort_key_vals = hits[-1].meta.sort
-            # indexed_date is nanoseconds, returned as int, but
-            # epoch_nanos not accepted by date parser, so format
-            # with only microseconds (which is what is fed in)
-            if sort_field == "indexed_date":
-                epoch_nanos = sort_key_vals[0]
-                epoch_secs = epoch_nanos // NS_PER_SEC
-                last_date = time.strftime("%Y-%m-%dT%H:%M:%S",
-                                          time.gmtime(epoch_secs))
-                last_nanos = epoch_nanos % NS_PER_SEC
-                sort_key_vals[0] = f"{last_date}.{last_nanos:09d}Z"
-            new_pt = _b64_encode_page_token(
-                _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
+            if randomize:
+                sort_vals = hits[-1].meta.sort  # [score, _doc]
+                new_pt = _b64_encode_page_token(
+                    _SORT_KEY_SEP.join([str(sort_vals[0]), str(sort_vals[1]), str(seed)])
+                )
+            else:
+                # generate paging token from all sort keys of last item:
+                sort_key_vals = hits[-1].meta.sort
+                # indexed_date is nanoseconds, returned as int, but
+                # epoch_nanos not accepted by date parser, so format
+                # with only microseconds (which is what is fed in)
+                if sort_field == "indexed_date":
+                    epoch_nanos = sort_key_vals[0]
+                    epoch_secs = epoch_nanos // NS_PER_SEC
+                    last_date = time.strftime("%Y-%m-%dT%H:%M:%S",
+                                              time.gmtime(epoch_secs))
+                    last_nanos = epoch_nanos % NS_PER_SEC
+                    sort_key_vals[0] = f"{last_date}.{last_nanos:09d}Z"
+                new_pt = _b64_encode_page_token(
+                    _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
 
         fields = self.fields(expanded)
         rows = [self._hit_to_row(h, fields, True) for h in hits]
@@ -1440,109 +1470,34 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
         # max controlled by index-level index.max_result_window, default is 10K.
         # allows 5K samples for lang/title pairs (for top words):
         max_page = 10000 // field_count
-        if page_size > max_page:
-            return max_page
-        return page_size
-
-
-    def _field_names_for_elasticsearch(self, fields: list[str]) -> ES_Fieldnames:
-        # convert requested external field names to ES field names to request
-        es_fields: ES_Fieldnames = [
-            self._ES_FIELDS[f].es_field_name
-            for f in fields
-            if not self._ES_FIELDS[f].metadata # no need to ask for metadata
-        ]
-        return es_fields
-
+        return min(page_size, max_page)
 
     def random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
                       page_size: int, fields: list[str], **kwargs: Any) -> AllItems:
         """
         Returns a single-page generator of randomly-ordered results.
-        For paginated access use paged_random_sample instead.
+        For multi-page random access, call paged_items with randomize=True directly.
         """
         if not fields:
             raise ValueError("random_sample requires fields list")
 
-        safe_page_size = self._safe_max_random_sample_page_size(page_size, len(fields))
-        es_fields = self._field_names_for_elasticsearch(fields)
+        page_size = self._safe_max_random_sample_page_size(page_size, len(fields))
 
-        search = self._basic_search(query, start_date, end_date, **kwargs)\
-                     .query(
-                         FunctionScore(
-                             functions=[
-                                 RandomScore()
-                             ]
-                         )
-                     )\
-                     .source(es_fields)\
-                     .extra(size=safe_page_size)
+        # Use expanded=True if any requested field lives in the expanded set
+        expanded = any(
+            self._ES_FIELDS[f].include == Include.EXPANDED
+            for f in fields if f in self._ES_FIELDS
+        )
 
-        hits = self._search_hits(search, "random-sample")
-        yield [self._hit_to_row(hit, fields) for hit in hits] # just one page
-
-    def paged_random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                            page_size: int, fields: list[str], **kwargs: Any) -> tuple[list[dict], Optional[str]]:
-        """
-        Return one page of randomly-ordered results and a pagination token.
-
-        Pass pagination_token=None on the first call; pass the returned token on
-        each subsequent call to advance through pages.  The seed embedded in the
-        token keeps the random ordering stable across pages so results are
-        non-overlapping.  Optionally supply seed=<int> on the first call to force
-        a specific ordering (useful for reproducible tests or re-runs).
-
-        WARNING: each page request re-scores ALL matching documents across shards
-        (RandomScore has no index structure to resume from).  Cost is O(N) per
-        page where N is the matching document count, so total cost grows linearly
-        with the number of pages fetched.  Keep page counts small (single digits)
-        and prefer large page_size values to minimise the number of round trips.
-        """
-        if not fields:
-            raise ValueError("paged_random_sample requires fields list")
-
-        safe_page_size = self._safe_max_random_sample_page_size(page_size, len(fields))
-        pagination_token = kwargs.pop("pagination_token", None)
-
-        # pull seed out of pagination_token returned
-        if pagination_token:
-            parts = _b64_decode_page_token(pagination_token).split(_SORT_KEY_SEP)
-            seed = int(parts[0])
-            after: list | None = [float(parts[1]), parts[2]]
-        else:
-            seed = kwargs.pop("seed", random.randint(0, 2**31 - 1))
-            after = None
-
-        es_fields = self._field_names_for_elasticsearch(fields)
-
-        search = self._basic_search(query, start_date, end_date, **kwargs)\
-                     .query(
-                         FunctionScore(
-                             functions=[
-                                 RandomScore(seed=seed, field="_seq_no")
-                             ]
-                         )
-                     )\
-                     .source(es_fields)\
-                     .extra(size=safe_page_size)\
-                     .sort({"_score": "desc"}, _SECONDARY_SORT_ARGS)
-
-        if after is not None:
-            search = search.extra(search_after=after)
-
-        hits = self._search_hits(search, "paged-random-sample")
-        if not hits:
-            return ([], None)
-
-        new_pt: str | None = None
-        if len(hits) == page_size:
-            sort_vals = hits[-1].meta.sort
-            new_pt = _b64_encode_page_token(
-                _SORT_KEY_SEP.join([str(seed), str(sort_vals[0]), str(sort_vals[1])])
-            )
-
-        rows = [self._hit_to_row(hit, fields) for hit in hits]
-        return rows, new_pt
+        page, _ = self.paged_items(
+            query, start_date, end_date,
+            page_size=page_size,
+            expanded=expanded,
+            randomize=True,
+            **kwargs
+        )
+        if page:
+            yield [{k: row[k] for k in fields if row.get(k) is not None} for row in page]
 
     @classmethod
     def fields(cls, expanded: bool = False) -> list[str]:
