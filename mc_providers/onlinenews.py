@@ -637,7 +637,6 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         # after pop-ing any local-only args:
         super().__init__(**kwargs)
-        self._base_url = "http://localhost:9200"
         eshosts = self._base_url.split(",") # comma separated list of http://SERVER:PORT
 
         # Retries without delay (never mind backoff!)
