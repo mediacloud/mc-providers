@@ -1399,14 +1399,10 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
 
         new_pt: str | None = None
         if len(hits) == page_size:
+            sort_key_vals = hits[-1].meta.sort
             if randomize:
-                sort_vals = hits[-1].meta.sort  # [score, _doc]
-                new_pt = _b64_encode_page_token(
-                    _SORT_KEY_SEP.join([str(sort_vals[0]), str(sort_vals[1]), str(seed)])
-                )
+                sort_key_vals = [sort_key_vals[0], sort_key_vals[1], seed]
             else:
-                # generate paging token from all sort keys of last item:
-                sort_key_vals = hits[-1].meta.sort
                 # indexed_date is nanoseconds, returned as int, but
                 # epoch_nanos not accepted by date parser, so format
                 # with only microseconds (which is what is fed in)
@@ -1417,8 +1413,8 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                                               time.gmtime(epoch_secs))
                     last_nanos = epoch_nanos % NS_PER_SEC
                     sort_key_vals[0] = f"{last_date}.{last_nanos:09d}Z"
-                new_pt = _b64_encode_page_token(
-                    _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
+            new_pt = _b64_encode_page_token(
+                _SORT_KEY_SEP.join([str(key) for key in sort_key_vals]))
 
         fields = self.fields(expanded)
         rows = [self._hit_to_row(h, fields, True) for h in hits]
