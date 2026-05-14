@@ -19,6 +19,7 @@ Releases > 4.0.0 will all be shared exclusively on github, and this project will
    (automatically adds a vM.m.latest tag, used by mediacloud/web-search!!)
 
 ### Version History
+* __v4.5.0__ - Add support for paging through randomized MC results (don't go many pages deep!) 
 * __v4.4.2__ - Move mediacloud dependency to test (it isn't used in main code)
 * __v4.4.1__ - Tweak dependencies for downstream compatibility (failed automated release)
 * __v4.4.0__ - Default ES max "fuzziness" (word edit distance) to zero for womrd~
