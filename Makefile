@@ -12,7 +12,7 @@ help:
 	@echo "make install -- installs pre-commit hooks, dev environment"
 	@echo "make lint -- runs pre-commit checks"
 	@echo "make test-mc -- run MC news provider tests"
-	@echo "make test-all -- run all tests"
+	@echo "make test[-all] -- run all tests"
 	@echo "make update -- update .pre-commit-config.yaml"
 	@echo "make clean -- remove development environment"
 
@@ -35,7 +35,7 @@ $(VENVDIR):
 update:	$(VENVDONE)
 	$(VENVBIN)/pre-commit autoupdate
 
-test-all:	$(VENVDONE)
+test test-all:	$(VENVDONE)
 	@test -n "$$MEDIA_CLOUD_API_KEY" || (echo "need MEDIA_CLOUD_API_KEY" 1>&2 && exit 1)
 	$(VENVBIN)/pytest
 
