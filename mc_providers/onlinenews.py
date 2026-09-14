@@ -360,6 +360,8 @@ class _ES_DateTime(_ES_Field):
 
 class _ES_Date(_ES_Field):
     def convert(self, datum: Any) -> Any:
+        if datum is None:
+            return None
         return dt.date.fromisoformat(datum[:10])
 
 def _format_day_counts(bucket: list) -> Counts:

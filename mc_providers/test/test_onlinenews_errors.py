@@ -14,7 +14,7 @@ These tests are DEFINITELY too strict/rigid but they're a starting place!
 
 import logging
 
-from elasticsearch_dsl.response import Response
+from elasticsearch_dsl.response import Hit, Response
 
 from mc_providers.exceptions import MysteryProviderException, PermanentProviderException, TemporaryProviderException, ProviderParseException
 from mc_providers.onlinenews import OnlineNewsMediaCloudProvider
@@ -163,6 +163,14 @@ def test_timed_out(caplog):
         assert len(caplog.records) == 0
         return
     assert False
+
+def test_hit_to_row_null_publication_date():
+    # regression test for https://github.com/mediacloud/mc-providers/issues/92
+    # ES can return a hit with a null publication_date; _hit_to_row must not
+    # raise (dt.date.fromisoformat(None[:10]) used to blow up with a TypeError).
+    hit = Hit({"_id": "id123", "_source": {"publication_date": None}})
+    row = OnlineNewsMediaCloudProvider._hit_to_row(hit, ["publish_date"])
+    assert row == {"publish_date": None}
 
 def test_one_line_parse_exception(caplog):
     # test correct handling of a single line parse exception message
