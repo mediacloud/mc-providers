@@ -333,12 +333,12 @@ class ContentProvider(ABC):
         raise QueryingEverythingUnsupportedQuery()
 
     def _collect_random_sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime,
-                               samples: int, fields: list[str], **kwargs: Any) -> list[dict]:
+                               samples: int, fields: list[str], **kwargs: Any) -> Items:
         """
         collect `samples` random items with `fields` using random_sample.
         MAYBE enforce max samples based on number of fields 10000//len(fields)?
         """
-        results: list[dict] = []
+        results: Items = []
         limit = samples
         for page in self.random_sample(query, start_date, end_date, limit, fields, **kwargs):
             results.extend(page)
@@ -348,7 +348,7 @@ class ContentProvider(ABC):
         return results
 
     def sample(self, query: str, start_date: dt.datetime, end_date: dt.datetime, limit: int = SAMPLE_LIMIT,
-               **kwargs: Any) -> list[dict]:
+               **kwargs: Any) -> Items:
         return self._collect_random_sample(query, start_date, end_date, samples=limit,
                                            fields=self.fields(), **kwargs)
 
@@ -369,7 +369,7 @@ class ContentProvider(ABC):
         raise NotImplementedError("Doesn't support fetching all matching content.")
 
     def paged_items(self, query: str, start_date: dt.datetime, end_date: dt.datetime, page_size: int = 1000,
-                    **kwargs: Any) -> tuple[list[dict], str | None]:
+                    **kwargs: Any) -> tuple[Items, str | None]:
         # return just one page of items and a pagination token to get next page; implementing subclasses
         # should read in token, offset, or whatever else they need from `kwargs` to determine which page to return
         raise NotImplementedError("Doesn't support fetching all matching content.")
@@ -445,7 +445,7 @@ class ContentProvider(ABC):
         sampled_count = len(sample)
 
         # get counts
-        counts: collections.Counter = collections.Counter()
+        counts: collections.Counter[str] = collections.Counter()
         counts.update(s.get('language', "UNK") for s in sample)
 
         # clean up results
@@ -475,8 +475,8 @@ class ContentProvider(ABC):
                 title_count += 1
 
         # now tokenize by language, removing stopwords and tally by term & document
-        term_counts: collections.Counter = collections.Counter() # total appearances of a term
-        doc_counts: collections.Counter = collections.Counter()  # number of documents with a term
+        term_counts: collections.Counter[str] = collections.Counter() # total appearances of a term
+        doc_counts: collections.Counter[str] = collections.Counter()  # number of documents with a term
 
         for language, title_list in titles.items():
             for doc_word_list in terms_without_stopwords_list(language, title_list): # takes min_length
@@ -643,6 +643,7 @@ class ContentProvider(ABC):
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
             self.trace(Trace.ARGS, "%r class default %s '%s'", self, variable, val)
+            assert isinstance(val, str)
             return val
         except AttributeError:
             pass
@@ -676,6 +677,7 @@ class ContentProvider(ABC):
             # 3. Look for class member named "variable", if it exists, return value
             val = getattr(self, variable)
             self.trace(Trace.ARGS, "%r class default %s %d", self, variable, val)
+            assert isinstance(val, int)
             return val
         except AttributeError:
             pass

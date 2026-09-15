@@ -14,7 +14,7 @@ MODEL_NAME = 'lid.176.bin'
 this_dir = os.path.dirname(os.path.realpath(__file__))
 
 # manage this like a lazy-loaded singleton so it is fast after the first time
-_stopwords_by_language = {}
+_stopwords_by_language: dict[str, set[str]] = {}
 
 
 fasttext_model: fasttext.FastText._FastText | None = None
@@ -43,7 +43,7 @@ def top_detected(text: str) -> str:
     return guesses[0][0][0].replace('__label__', '')
 
 
-def stopwords_for_language(lang_code: str) -> set:
+def stopwords_for_language(lang_code: str) -> set[str]:
     # manage the _stopwords_by_language dict, from alpha2 to list
     if len(lang_code) != 2:
         raise RuntimeError('Invalid language "{}" - use 2 letter alpha code'.format(lang_code))
