@@ -1042,14 +1042,16 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
             search = search\
                 .query(FunctionScore(functions=[RandomScore(seed=seed, field="_seq_no")]))\
                 .sort({"_score": {"order": "desc"}}, _SECONDARY_SORT_ARGS)
+            counter = "paged-random"
         else:
             # see discussion above at _SECONDARY_SORT_ARGS declaration
             search = search.sort(*[{sort_field: sort_order}, _SECONDARY_SORT_ARGS])
+            counter = "paged-items"
 
         if after is not None:
             search = search.extra(search_after=after)
 
-        hits = self._search_hits(search, "paged-items")
+        hits = self._search_hits(search, counter)
         if not hits:
             logger.debug("MC._paged_items no hits")
             return ([], None)

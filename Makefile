@@ -1,9 +1,9 @@
 # from es-tools
 
-# to create development environment: `make`
+# to create development environment: `make install`
 # to run pre-commit linting/formatting: `make lint`
 
-VENVDIR=venv
+VENVDIR=.venv
 VENVBIN=$(VENVDIR)/bin
 VENVDONE=$(VENVDIR)/.done
 
@@ -13,7 +13,7 @@ help:
 	@echo "make lint -- runs pre-commit checks"
 	@echo "make test-mc -- run MC news provider tests"
 	@echo "make test[-all] -- run all tests"
-	@echo "make update -- update .pre-commit-config.yaml"
+	@echo "make update-pre-commit -- update .pre-commit-config.yaml"
 	@echo "make clean -- remove development environment"
 
 ## run pre-commit checks on all files
@@ -23,16 +23,16 @@ lint:	$(VENVDONE)
 # create venv with project dependencies
 # --editable skips installing project sources in venv
 # pre-commit is in dev optional-requirements
-install $(VENVDONE): $(VENVDIR) Makefile pyproject.toml
-	$(VENVBIN)/python3 -m pip install --editable '.[dev,test]'
+install $(VENVDONE): Makefile pyproject.toml uv.lock
+	uv sync --extra dev --extra test --extra mypy
 	$(VENVBIN)/pre-commit install
 	touch $(VENVDONE)
 
-$(VENVDIR):
-	python3 -m venv $(VENVDIR)
+uv.lock: pyproject.toml
+	uv lock
 
 ## update .pre-commit-config.yaml
-update:	$(VENVDONE)
+update-pre-commit:	$(VENVDONE)
 	$(VENVBIN)/pre-commit autoupdate
 
 test test-all:	$(VENVDONE)
