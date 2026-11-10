@@ -8,16 +8,15 @@ repos:
     hooks:
       - id: autoflake
         args: ["--in-place", "--remove-unused-variables", "--remove-all-unused-imports"]
-  - repo: http://github.com/pre-commit/mirrors-mypy
-    rev: v2.3.1
+  - repo: local
     hooks:
-      # run mypy via wrapper to make sure "pre-commit" optional
-      # dependencies in pyproject.toml installed (to keep DRY).
       - id: mypy
-        entry: ./.pre-commit-run.sh mypy
-        additional_dependencies: ["pip>=22.0"]
-        # without implicit --ignore-missing-imports:
+        name: mypy
+        entry: uv run mypy
         args: []
+        language: system
+        types: [python]
+        require_serial: true
 
 # NOTE! omits deprecated providers AND nsa client library
 exclude: "/test"
