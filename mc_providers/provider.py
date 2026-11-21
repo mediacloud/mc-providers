@@ -11,6 +11,11 @@ from types import TracebackType
 from typing import Any, Iterable, Literal, NoReturn, TypeAlias, TypedDict
 from operator import itemgetter
 
+try:
+    from typing import Self     # python 3.12+
+except:
+    from typing_extensions import Self
+
 # PyPI:
 from dateutil.relativedelta import relativedelta
 from sigfig import sigfig
@@ -753,6 +758,23 @@ class ContentProvider(ABC):
             if self._time_by_op:
                 self._statsd_client.timing(f"query.op_{op}", ms)
 
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool:
+        self.close()
+        return True             # propogate exceptions
+
+    def close(self) -> None:
+        """
+        override to clean up any open sockets etc
+        """
 
 # used in normalized_count_over_time
 def _combined_split_and_normalized_counts(matching_results: list[_DateCount], total_results: list[_DateCount]) -> list[_CombinedDateInfo]:

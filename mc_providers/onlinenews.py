@@ -368,6 +368,11 @@ class OnlineNewsMediaCloudProvider(OnlineNewsAbstractProvider):
                                                request_timeout=self._timeout,
                                                randomize_nodes_in_pool=True)
 
+    def close(self) -> None:
+        """
+        close connection
+        """
+        self._es.close()        # avoid dangling connections
 
     @classmethod
     def domain_search_string(cls) -> str:

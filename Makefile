@@ -24,7 +24,7 @@ lint:	$(VENVDONE)
 # --editable skips installing project sources in venv
 # pre-commit is in dev optional-requirements
 install $(VENVDONE): Makefile pyproject.toml uv.lock
-	uv sync --extra dev --extra test --extra mypy
+	uv sync --no-install-project --extra dev --extra test --extra mypy
 	$(VENVBIN)/pre-commit install
 	touch $(VENVDONE)
 
