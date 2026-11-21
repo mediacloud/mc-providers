@@ -8,6 +8,8 @@ import mediacloud.api
 import os
 from typing import List
 
+import psutil
+
 from mc_providers import (provider_for, PLATFORM_ONLINE_NEWS, PLATFORM_SOURCE_MEDIA_CLOUD)
 
 MEDIA_CLOUD_API_KEY = os.getenv('MEDIA_CLOUD_API_KEY', None)
@@ -794,3 +796,22 @@ class OnlineNewsMediaCloudProviderTest(unittest.TestCase):
                                       fuzziness="AUTO"
                                       )
         assert result > 0
+
+    def connections(self):
+        proc = psutil.Process()
+        files = proc.net_connections()
+        print(files)
+        return len(files)
+
+    def test_context_without(self):
+        before = self.connections()
+        self._provider.count("coronavirus", dt.datetime(2023, 11, 1), dt.datetime(2023, 11, 1))
+        after = self.connections()
+        assert after > before   # more connections after!
+
+    def test_context_with(self):
+        before = self.connections()
+        with self._provider as p:
+            p.count("coronavirus", dt.datetime(2023, 11, 1), dt.datetime(2023, 11, 1))
+        after = self.connections()
+        assert after == before  # same number of connections after!

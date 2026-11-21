@@ -6,7 +6,8 @@ for fetching content, but not is primarily an internal library for accessing the
 Archive (ElasticSearch index). Accordingly, releases > 4.0.0 are all be shared exclusively on github, and
 this project was delisted from pypi around April 2025.
 
-Install with pip (`pip install .`) and the `install.sh` script. 
+To create development environment run `make install` and the `install.sh` script.
+(requires "uv" package manager which can be installed with "pip install uv"!!)
 
 Requires environment variables set for various interfaces to work correctly.
 
@@ -20,6 +21,7 @@ Requires environment variables set for various interfaces to work correctly.
    (automatically adds a vM.m.latest tag, used by mediacloud/web-search!!)
 
 ### Version History
+* __v5.2.0__ - Add close method; Provider object now a "with" Context (to close open ES connections).
 * __v5.1.1__ - Add paged-random counter (paged_items is now the only way to get random samples, and was not visible in grafana)
 * __v5.1.0__ - Add fields arguments to paged_items, sample; words samples 5K stories again. Removed wayback stubs. all_items is now generic.  Removed random_sample method.
 * __v5.0.0__ - Update dependencies, py3.13 compatability, remove now-unused WaybackMachine support

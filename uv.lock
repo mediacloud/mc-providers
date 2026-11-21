@@ -1439,8 +1439,8 @@ wheels = [
 
 [[package]]
 name = "mc-providers"
-version = "5.1.1"
-source = { virtual = "." }
+version = "5.2.0"
+source = { editable = "." }
 dependencies = [
     { name = "ciso8601" },
     { name = "dateparser" },
